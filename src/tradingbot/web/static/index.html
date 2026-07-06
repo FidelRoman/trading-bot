@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BOLLINGER·BOT — EUR/USD M15</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=JetBrains+Mono:wght@400;600;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/styles.css">
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+<div class="bg-grid"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">◈</span>
+    <span class="brand-name">BOLLINGER<span class="thin">·BOT</span></span>
+    <span class="brand-sub">EUR/USD · M15 · BB(20,2)</span>
+  </div>
+  <div class="top-controls">
+    <span id="mode-chip" class="chip">—</span>
+    <span id="conn-chip" class="chip">SIN CONEXIÓN</span>
+    <span id="status-pill" class="pill"><span class="dot"></span><span id="status-text">…</span></span>
+    <button id="toggle-btn" class="btn">PAUSAR</button>
+  </div>
+</header>
+
+<main class="grid">
+
+  <section class="card ticker" id="ticker-card">
+    <div class="card-title">EUR / USD <span class="live-tag" id="live-tag">LIVE</span></div>
+    <div class="ticker-price">
+      <div class="side">
+        <div class="lbl">BID</div>
+        <div class="px" id="bid">—</div>
+      </div>
+      <div class="side">
+        <div class="lbl">ASK</div>
+        <div class="px" id="ask">—</div>
+      </div>
+    </div>
+    <div class="ticker-foot">
+      <span>SPREAD <b id="spread">—</b> pips</span>
+      <span>P&amp;L FLOTANTE <b id="floating">—</b></span>
+    </div>
+  </section>
+
+  <section class="card metrics">
+    <div class="metric"><div class="m-lbl">EQUITY</div><div class="m-val" id="m-equity">—</div></div>
+    <div class="metric"><div class="m-lbl">P&amp;L HOY</div><div class="m-val" id="m-daypl">—</div></div>
+    <div class="metric"><div class="m-lbl">WIN RATE</div><div class="m-val" id="m-winrate">—</div></div>
+    <div class="metric"><div class="m-lbl">PROFIT FACTOR</div><div class="m-val" id="m-pf">—</div></div>
+    <div class="metric"><div class="m-lbl">TRADES HOY</div><div class="m-val" id="m-trades-today">—</div></div>
+    <div class="metric"><div class="m-lbl">POSICIÓN</div><div class="m-val" id="m-position">FLAT</div></div>
+  </section>
+
+  <section class="card span12">
+    <div class="card-title">VELAS 15M + BANDAS DE BOLLINGER</div>
+    <div id="chart-candles" class="chart tall"></div>
+  </section>
+
+  <section class="card span6">
+    <div class="card-title">CURVA DE EQUITY</div>
+    <div id="chart-equity" class="chart"></div>
+  </section>
+
+  <section class="card span6">
+    <div class="card-title">ÚLTIMAS OPERACIONES</div>
+    <div class="table-wrap">
+      <table id="trades-table">
+        <thead><tr><th>DIR</th><th>UNIDADES</th><th>ENTRADA</th><th>SALIDA</th><th>PIPS</th><th>P&amp;L</th><th>MOTIVO</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="empty" id="trades-empty">Sin operaciones todavía</div>
+    </div>
+  </section>
+
+  <section class="card span12">
+    <div class="card-title">REGISTRO DEL BOT</div>
+    <div id="log-feed" class="log-feed"></div>
+  </section>
+
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

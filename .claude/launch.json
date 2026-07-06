@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dashboard-mock",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["MOCK=1", "uv", "run", "uvicorn", "tradingbot.web.app:app", "--port", "8321"],
+      "port": 8321
+    },
+    {
+      "name": "dashboard",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "uvicorn", "tradingbot.web.app:app", "--port", "8000"],
+      "port": 8000
+    }
+  ]
+}

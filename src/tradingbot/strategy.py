@@ -1,0 +1,129 @@
+"""Estrategia Bollinger de reversión a la media — funciones puras sobre pandas.
+
+Contrato del DataFrame de velas: índice DatetimeIndex en UTC, columnas
+``open, high, low, close`` (precios bid o mid, consistentes entre sí).
+Todas las señales se evalúan sobre velas CERRADAS: la señal de la fila ``t``
+usa solo información disponible al cierre de ``t`` (sin repintado).
+"""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from datetime import datetime, time, timezone
+from typing import Optional
+
+import numpy as np
+import pandas as pd
+
+from .config import PIP, StrategyParams
+
+LONG = "long"
+SHORT = "short"
+
+
+@dataclass(frozen=True)
+class Signal:
+    side: str            # LONG | SHORT
+    time: datetime       # cierre de la vela que generó la señal
+    ref_close: float     # cierre de esa vela
+    take_profit: float   # banda media al momento de la señal
+    stop_distance: float # distancia de SL en precio (sl_atr_mult * ATR)
+
+
+def add_indicators(df: pd.DataFrame, p: StrategyParams) -> pd.DataFrame:
+    """Añade bb_upper/bb_mid/bb_lower y atr. Devuelve una copia."""
+    out = df.copy()
+    close = out["close"]
+    mid = close.rolling(p.bb_period).mean()
+    std = close.rolling(p.bb_period).std(ddof=0)
+    out["bb_mid"] = mid
+    out["bb_upper"] = mid + p.bb_std * std
+    out["bb_lower"] = mid - p.bb_std * std
+
+    prev_close = close.shift(1)
+    tr = pd.concat(
+        [
+            out["high"] - out["low"],
+            (out["high"] - prev_close).abs(),
+            (out["low"] - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    # Suavizado de Wilder
+    out["atr"] = tr.ewm(alpha=1.0 / p.atr_period, adjust=False, min_periods=p.atr_period).mean()
+    return out
+
+
+def compute_signals(df: pd.DataFrame, p: StrategyParams) -> pd.Series:
+    """Serie con LONG/SHORT/NaN por vela (vectorizado, para backtest).
+
+    Largo: la vela anterior cerró bajo la banda inferior y esta cierra de
+    vuelta dentro. Corto: simétrico contra la banda superior.
+    """
+    d = df if "bb_mid" in df.columns else add_indicators(df, p)
+    close, prev_close = d["close"], d["close"].shift(1)
+    lower, prev_lower = d["bb_lower"], d["bb_lower"].shift(1)
+    upper, prev_upper = d["bb_upper"], d["bb_upper"].shift(1)
+
+    long_sig = (prev_close < prev_lower) & (close > lower) & (close < d["bb_mid"])
+    short_sig = (prev_close > prev_upper) & (close < upper) & (close > d["bb_mid"])
+
+    out = pd.Series(np.nan, index=d.index, dtype=object)
+    out[long_sig] = LONG
+    out[short_sig] = SHORT
+    return out
+
+
+def latest_signal(df: pd.DataFrame, p: StrategyParams) -> Optional[Signal]:
+    """Señal de la última vela cerrada del DataFrame, o None."""
+    d = add_indicators(df, p)
+    sigs = compute_signals(d, p)
+    side = sigs.iloc[-1]
+    last = d.iloc[-1]
+    if not isinstance(side, str) or math.isnan(last["atr"]):
+        return None
+    ts = d.index[-1].to_pydatetime()
+    return Signal(
+        side=side,
+        time=ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc),
+        ref_close=float(last["close"]),
+        take_profit=float(last["bb_mid"]),
+        stop_distance=float(p.sl_atr_mult * last["atr"]),
+    )
+
+
+def entry_allowed(ts: datetime) -> bool:
+    """Filtro de sesión para ENTRADAS nuevas (las salidas siempre se permiten).
+
+    Bloquea: sábado; domingo antes de 22:00 UTC (mercado cerrado); viernes
+    desde 19:00 UTC (evitar cierre semanal); ventana de rollover diaria
+    21:45–22:15 UTC (spreads amplios).
+    """
+    ts = ts.astimezone(timezone.utc)
+    wd, t = ts.weekday(), ts.time()
+    if wd == 5:  # sábado
+        return False
+    if wd == 6 and t < time(22, 0):  # domingo pre-apertura
+        return False
+    if wd == 4 and t >= time(19, 0):  # viernes tarde
+        return False
+    if time(21, 45) <= t < time(22, 15):  # rollover
+        return False
+    return True
+
+
+def size_position(equity: float, risk_frac: float, stop_distance: float, min_lot: int) -> int:
+    """Unidades a operar arriesgando ``risk_frac`` del equity con ese SL.
+
+    Para EUR/USD con cuenta en USD la pérdida al tocar SL es
+    ``units * stop_distance`` USD. Redondea hacia abajo a múltiplos de
+    ``min_lot``; devuelve 0 si el riesgo no alcanza ni para un micro-lote.
+    """
+    if stop_distance <= 0 or equity <= 0:
+        return 0
+    units = (equity * risk_frac) / stop_distance
+    return int(units // min_lot) * min_lot
+
+
+def spread_ok(bid: float, ask: float, max_spread_pips: float) -> bool:
+    return (ask - bid) / PIP <= max_spread_pips
