@@ -57,9 +57,8 @@ class BacktestResult:
             "net_profit": round(float(pnls.sum()), 2),
             "return_pct": round(float(pnls.sum()) / self.initial_equity * 100, 2),
             "win_rate_pct": round(len(wins) / len(pnls) * 100, 1) if len(pnls) else 0.0,
-            "profit_factor": round(float(gross_win / gross_loss), 2)
-            if gross_loss > 0
-            else float("inf"),
+            # None cuando no hay pérdidas (PF sería infinito y no es JSON-válido)
+            "profit_factor": round(float(gross_win / gross_loss), 2) if gross_loss > 0 else None,
             "max_drawdown_pct": round(float(dd) * 100, 2),
             "avg_trade": round(float(pnls.mean()), 2) if len(pnls) else 0.0,
             "total_pips": round(float(sum(t.pips for t in self.trades)), 1),
@@ -187,6 +186,45 @@ def run_backtest(
 
     curve = pd.Series(eq_values, index=pd.DatetimeIndex(eq_times), dtype=float)
     return BacktestResult(trades=trades, equity_curve=curve, initial_equity=initial_equity)
+
+
+def synthetic_df(days: int = 365, seed: int = 42) -> pd.DataFrame:
+    """Random walk m15 para probar el pipeline. NO representa el mercado real."""
+    from datetime import timezone as _tz
+
+    rng = np.random.default_rng(seed)
+    n = days * 96
+    steps = rng.normal(0, 0.00035, n) + 0.000002 * np.sin(np.arange(n) / 200)
+    close = 1.08 + np.cumsum(steps)
+    idx = pd.date_range(end=datetime.now(_tz.utc), periods=n, freq="15min")
+    high = close + np.abs(rng.normal(0, 0.0002, n))
+    low = close - np.abs(rng.normal(0, 0.0002, n))
+    open_ = np.roll(close, 1)
+    open_[0] = close[0]
+    return pd.DataFrame({"open": open_, "high": high, "low": low, "close": close}, index=idx)
+
+
+def download_history(broker, months: int, cache_dir: Path, progress=None) -> pd.DataFrame:
+    """Descarga histórico m15 de FXCM por trozos de 90 días y lo cachea en CSV.
+
+    ``progress`` es un callback opcional ``fn(str)`` para reportar avance.
+    """
+    from datetime import timedelta, timezone as _tz
+
+    chunks = []
+    end = datetime.now(_tz.utc)
+    cursor = end - timedelta(days=months * 30)
+    while cursor < end:
+        chunk_end = min(cursor + timedelta(days=90), end)
+        if progress:
+            progress(f"Descargando {cursor:%Y-%m-%d} → {chunk_end:%Y-%m-%d}")
+        chunks.append(broker.get_candles(count=0, date_from=cursor, date_to=chunk_end))
+        cursor = chunk_end
+    df = pd.concat(chunks)
+    df = df[~df.index.duplicated(keep="first")].sort_index()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    df.to_csv(cache_dir / f"eurusd_m15_{months}m.csv")
+    return df[["open", "high", "low", "close"]]
 
 
 def load_csv(path: str | Path) -> pd.DataFrame:

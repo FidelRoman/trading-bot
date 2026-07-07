@@ -16,7 +16,22 @@ Reversión a la media, evaluada solo sobre velas cerradas (sin repintado):
   spread máx. 1.5 pips; sin entradas viernes tarde ni en rollover;
   **límite de pérdida diaria 3%** → pausa hasta el día siguiente.
 
-Parámetros en `src/tradingbot/config.py` y `.env`.
+Parámetros en `src/tradingbot/config.py` y `.env`, **editables en caliente desde
+la pestaña "Ajustes del Bot"** (validados y acotados en el servidor; aplican
+desde la próxima vela).
+
+## Dashboard web
+
+Interfaz estilo FX Command Center con gestión completa del bot:
+
+- **Dashboard**: velas 15m con bandas (timeframes M5/M15/H1/H4), ticker en vivo,
+  posiciones activas con P&L y cierre individual/CLOSE ALL, órdenes manuales
+  (Force Buy/Sell con lote, TP y SL en pips), toggle auto-trading, logs.
+- **Ajustes del Bot**: estrategia y riesgo editables en runtime.
+- **Backtesting**: simula la estrategia (con los ajustes actuales) sobre
+  histórico FXCM real, datos sintéticos o un CSV subido; métricas, veredicto,
+  curva de equity y tabla de trades. Corre en segundo plano.
+- **Historial** y **Monitor de Actividad**: trades cerrados, curva de equity, log.
 
 ## Requisitos
 
@@ -53,8 +68,11 @@ Sin credenciales en `.env` el bot arranca automáticamente en modo **SIMULADO**
 
 El bot opera mientras la Mac esté despierta: `caffeinate -s uv run uvicorn …`.
 
-## Advertencia
+## Advertencias
 
-Ninguna estrategia garantiza rentabilidad. Este bot puede perder dinero.
-Flujo recomendado: backtest → semanas en demo → evaluar → recién entonces real,
-empezando con el riesgo mínimo.
+- Ninguna estrategia garantiza rentabilidad. Este bot puede perder dinero.
+  Flujo recomendado: backtest → semanas en demo → evaluar → recién entonces
+  real, empezando con el riesgo mínimo.
+- El servidor **no tiene autenticación**: mantenerlo en `localhost` (default de
+  uvicorn). No exponerlo a internet ni a la red local sin poner un proxy con
+  auth delante.

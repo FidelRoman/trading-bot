@@ -156,6 +156,7 @@ class FxcmBroker:
                 rows.append(
                     {
                         "trade_id": str(t.trade_id),
+                        "open_order_id": str(getattr(t, "open_order_id", "")),
                         "side": "long" if t.buy_sell == fxcorepy.Constants.BUY else "short",
                         "units": int(t.amount),
                         "open_rate": float(t.open_rate),

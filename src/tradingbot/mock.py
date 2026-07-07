@@ -145,6 +145,7 @@ class MockBroker:
             self._trades.append(
                 {
                     "trade_id": tid,
+                    "open_order_id": tid,
                     "side": side,
                     "units": units,
                     "open_rate": round(fill, 5),

@@ -211,10 +211,15 @@ class BotEngine:
         open_trades = {t["trade_id"]: t for t in self.broker.open_trades()}
 
         if rec["trade_id"] is None:
-            # Orden recién enviada: enlazar con el trade que apareció
+            # Orden recién enviada: enlazar por open_order_id; si el bróker no
+            # lo expone, caer al trade más reciente (puede haber posiciones
+            # externas, p. ej. abiertas desde TradingView)
             if open_trades:
-                newest = max(open_trades.values(), key=lambda t: t["open_time"])
-                self.store.link_trade(rec["id"], newest["trade_id"], newest["open_rate"])
+                match = next(
+                    (t for t in open_trades.values() if t.get("open_order_id") == rec["order_id"]),
+                    None,
+                ) or max(open_trades.values(), key=lambda t: t["open_time"])
+                self.store.link_trade(rec["id"], match["trade_id"], match["open_rate"])
             return
 
         if rec["trade_id"] in open_trades:

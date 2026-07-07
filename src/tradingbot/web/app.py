@@ -13,7 +13,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -21,6 +21,7 @@ from ..config import load_settings
 from ..engine import BotEngine
 from ..store import Store
 from ..strategy import add_indicators
+from .backtest_job import UPLOAD_CSV, BacktestJob
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger(__name__)
@@ -83,6 +84,7 @@ async def lifespan(app: FastAPI):
     app.state.store = store
     app.state.broker = broker
     app.state.hub = hub
+    app.state.backtest = BacktestJob(store, engine, broker)
 
     engine_task = asyncio.create_task(engine.run())
 
@@ -240,6 +242,42 @@ async def close_all():
     if closed:
         app.state.store.log("warn", f"Cierre manual de {closed} posición(es) solicitado")
     return {"ok": not errors, "closed": closed, "errors": errors}
+
+
+@app.get("/api/backtest")
+async def backtest_state():
+    return app.state.backtest.state()
+
+
+@app.post("/api/backtest")
+async def backtest_start(payload: dict = Body(...)):
+    job: BacktestJob = app.state.backtest
+    source = str(payload.get("source", "synthetic"))
+    months = max(1, min(int(payload.get("months", 24)), 60))
+    equity = max(100.0, float(payload.get("equity", 10_000)))
+    spread = max(0.0, min(float(payload.get("spread_pips", 1.2)), 10.0))
+    if not job.start_allowed():
+        return {"ok": False, "error": "Ya hay un backtest en ejecución"}
+
+    async def _runner():
+        await asyncio.to_thread(job.run_sync, source, months, equity, spread)
+        await app.state.hub.broadcast({"type": "backtest"})
+
+    asyncio.create_task(_runner())
+    return {"ok": True}
+
+
+@app.post("/api/backtest/csv")
+async def backtest_upload(file: UploadFile):
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        return {"ok": False, "error": "El archivo debe ser .csv"}
+    data = await file.read()
+    if len(data) > 50 * 1024 * 1024:
+        return {"ok": False, "error": "CSV demasiado grande (máx. 50 MB)"}
+    UPLOAD_CSV.parent.mkdir(parents=True, exist_ok=True)
+    UPLOAD_CSV.write_bytes(data)
+    app.state.store.log("info", f"CSV subido para backtest: {file.filename} ({len(data) // 1024} KB)")
+    return {"ok": True, "filename": file.filename, "kb": len(data) // 1024}
 
 
 @app.websocket("/ws")

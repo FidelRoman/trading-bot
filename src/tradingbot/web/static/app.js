@@ -193,6 +193,9 @@ function renderStatus(s) {
   const mode = $("mode-chip");
   mode.textContent = (s.mode || "—").toUpperCase();
   mode.className = "chip" + (s.mode === "simulado" ? " warn" : " ok");
+  const fxcmOpt = document.querySelector('#bt-source option[value="fxcm"]');
+  fxcmOpt.disabled = s.mode === "simulado";
+  if (fxcmOpt.disabled && $("bt-source").value === "fxcm") $("bt-source").value = "synthetic";
   const conn = $("conn-chip");
   conn.textContent = s.connected ? "CONECTADO" : "SIN CONEXIÓN";
   conn.className = "chip" + (s.connected ? " ok" : " warn");
@@ -231,6 +234,7 @@ function connectWS() {
     const msg = JSON.parse(ev.data);
     if (msg.type === "tick") renderTick(msg);
     else if (msg.type === "status") renderStatus(msg.status);
+    else if (msg.type === "backtest") { refreshBacktest(); refreshLogs(); }
     else if (msg.type === "candle") { refreshCandles(); refreshTrades(); refreshEquity(); refreshLogs(); }
   };
   ws.onopen = () => { $("live-tag").innerHTML = '<span class="dot-live"></span>LIVE'; };
@@ -249,6 +253,7 @@ function switchView(name) {
   if (name === "activity") { ensureEquityChart(); refreshLogs(); }
   if (name === "history") refreshTrades();
   if (name === "settings") refreshSettings();
+  if (name === "backtest") refreshBacktest();
 }
 document.querySelectorAll(".nav-item").forEach((n) => n.addEventListener("click", () => switchView(n.dataset.view)));
 document.querySelectorAll("[data-goto]").forEach((b) => b.addEventListener("click", () => switchView(b.dataset.goto)));
@@ -346,6 +351,131 @@ $("btn-save-settings").addEventListener("click", async () => {
     msg.className = "hint";
   }
   setTimeout(() => { msg.textContent = "Los cambios aplican desde la próxima vela."; msg.className = "hint"; }, 5000);
+});
+
+/* ================= backtesting ================= */
+function ensureBacktestChart() {
+  if (state.btChart) return;
+  state.btChart = LightweightCharts.createChart($("chart-backtest"), chartOpts);
+  state.btSeries = state.btChart.addAreaSeries({
+    lineColor: "#4ade80", lineWidth: 2,
+    topColor: "rgba(74,222,128,0.22)", bottomColor: "rgba(74,222,128,0.02)",
+    priceFormat: { type: "price", precision: 2, minMove: 0.01 },
+  });
+}
+
+function showBtMsg(text, cls) {
+  const el = $("bt-msg");
+  el.textContent = text;
+  el.className = "manual-msg " + (cls || "");
+}
+
+function renderBacktest(st) {
+  const runBtn = $("bt-run");
+  if (st.status === "running") {
+    runBtn.disabled = true;
+    runBtn.textContent = "EJECUTANDO…";
+    showBtMsg(st.note || "Ejecutando…", "");
+    if (!state.btPoll) state.btPoll = setInterval(refreshBacktest, 2000);
+    return;
+  }
+  runBtn.disabled = false;
+  runBtn.textContent = "EJECUTAR BACKTEST";
+  if (state.btPoll) { clearInterval(state.btPoll); state.btPoll = null; }
+
+  if (st.status === "error") {
+    showBtMsg("Error: " + st.error, "err");
+    $("bt-results").style.display = "none";
+    return;
+  }
+  if (st.status !== "done") { showBtMsg("", ""); return; }
+
+  showBtMsg(`Terminado en ${st.finished?.slice(11, 19)} UTC — ${st.candles} velas (${st.source})`, "ok");
+  $("bt-results").style.display = "block";
+
+  const s = st.summary;
+  // PF null = sin pérdidas (infinito) o sin trades
+  const pfInf = s.profit_factor == null && s.trades > 0 && s.net_profit > 0;
+  const pfText = pfInf ? "∞" : s.profit_factor == null ? "—" : fmt(s.profit_factor);
+  const banner = $("bt-banner");
+  if (st.synthetic) {
+    banner.className = "bt-banner warn";
+    banner.textContent = "⚠ DATOS SINTÉTICOS — solo valida el pipeline, no representa el mercado real.";
+  } else if (s.trades === 0) {
+    banner.className = "bt-banner warn";
+    banner.textContent = "Sin operaciones en el período probado — nada que evaluar.";
+  } else if (pfInf || s.profit_factor >= 1) {
+    banner.className = "bt-banner good";
+    banner.textContent = `✓ EXPECTATIVA POSITIVA en el histórico probado (PF ${pfText}). Validar en demo antes de operar.`;
+  } else {
+    banner.className = "bt-banner bad";
+    banner.textContent = `✗ PROFIT FACTOR ${pfText} < 1 — NO operar con estos parámetros; recalibrar en Ajustes.`;
+  }
+
+  const setVal = (id, txt, posneg) => {
+    const el = $(id);
+    el.textContent = txt;
+    el.className = "m-val" + (posneg == null ? "" : posneg >= 0 ? " pos" : " neg");
+  };
+  setVal("bt-net", sign(s.net_profit), s.net_profit);
+  setVal("bt-return", sign(s.return_pct, "%"), s.return_pct);
+  setVal("bt-winrate", fmt(s.win_rate_pct, 1) + "%");
+  setVal("bt-pf", pfText, pfInf ? 1 : s.profit_factor == null ? null : s.profit_factor - 1);
+  setVal("bt-dd", fmt(s.max_drawdown_pct, 1) + "%", s.max_drawdown_pct + 5);
+  setVal("bt-trades-n", s.trades);
+  setVal("bt-pips", fmt(s.total_pips, 1), s.total_pips);
+  setVal("bt-avg", sign(s.avg_trade), s.avg_trade);
+
+  $("bt-source-chip").textContent = `${st.source} · ${st.period.from.slice(0, 10)} → ${st.period.to.slice(0, 10)}`;
+  const p = st.params;
+  $("bt-params-chip").textContent =
+    `BB(${p.bb_period},${p.bb_std}) · SL ${p.sl_atr_mult}×ATR(${p.atr_period}) · riesgo ${(p.risk_per_trade * 100).toFixed(1)}%`;
+
+  ensureBacktestChart();
+  state.btSeries.setData(st.equity);
+  state.btChart.timeScale().fitContent();
+
+  document.querySelector("#bt-table tbody").innerHTML = st.trades.slice().reverse().map((t) => {
+    const cls = t.pnl >= 0 ? "pos" : "neg";
+    return `<tr>
+      <td class="${t.side === "long" ? "dir-long" : "dir-short"}">${t.side === "long" ? "▲ BUY" : "▼ SELL"}</td>
+      <td>${fmt(t.units, 0)}</td>
+      <td>${fmtPx(t.entry)}</td>
+      <td>${fmtPx(t.exit)}</td>
+      <td class="${cls}">${fmt(t.pips, 1)}</td>
+      <td class="${cls}">${sign(t.pnl)}</td>
+      <td>${t.reason.toUpperCase()}</td>
+      <td>${t.exit_time.slice(0, 16).replace("T", " ")}</td>
+    </tr>`;
+  }).join("");
+}
+
+async function refreshBacktest() {
+  try { renderBacktest(await getJSON("/api/backtest")); } catch {}
+}
+
+$("bt-run").addEventListener("click", async () => {
+  const source = $("bt-source").value;
+  const fileInput = $("bt-file");
+  if (source === "csv" && fileInput.files.length) {
+    showBtMsg("Subiendo CSV…", "");
+    const fd = new FormData();
+    fd.append("file", fileInput.files[0]);
+    const up = await (await fetch("/api/backtest/csv", { method: "POST", body: fd })).json();
+    if (!up.ok) { showBtMsg("Error subiendo CSV: " + up.error, "err"); return; }
+  }
+  const r = await postJSON("/api/backtest", {
+    source,
+    months: +$("bt-months").value,
+    equity: +$("bt-equity").value,
+    spread_pips: +$("bt-spread").value,
+  });
+  if (!r.ok) { showBtMsg("Error: " + r.error, "err"); return; }
+  refreshBacktest();
+});
+
+$("bt-file").addEventListener("change", () => {
+  if ($("bt-file").files.length) $("bt-source").value = "csv";
 });
 
 /* ================= init ================= */
