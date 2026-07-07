@@ -50,13 +50,39 @@ class FxcmCredentials:
             )
 
 
+def _db_path() -> Path:
+    """DB separada por modo: los datos simulados no deben mezclarse con los
+    de la cuenta FXCM (contaminan equity diario, historial y métricas)."""
+    name = "tradingbot-sim.db" if os.getenv("MOCK") == "1" else "tradingbot.db"
+    return PROJECT_ROOT / "data" / name
+
+
 @dataclass(frozen=True)
 class Settings:
     strategy: StrategyParams = field(default_factory=StrategyParams)
     risk: RiskParams = field(default_factory=RiskParams)
     fxcm: FxcmCredentials = field(default_factory=FxcmCredentials)
-    db_path: Path = PROJECT_ROOT / "data" / "tradingbot.db"
+    db_path: Path = field(default_factory=_db_path)
 
 
 def load_settings() -> Settings:
     return Settings()
+
+
+def update_env_file(values: dict[str, str], path: Path | None = None) -> None:
+    """Actualiza (o crea) claves en el .env preservando el resto de líneas."""
+    env_path = path or (PROJECT_ROOT / ".env")
+    lines: list[str] = []
+    if env_path.exists():
+        lines = env_path.read_text().splitlines()
+    remaining = dict(values)
+    out: list[str] = []
+    for line in lines:
+        key = line.split("=", 1)[0].strip() if "=" in line and not line.lstrip().startswith("#") else None
+        if key in remaining:
+            out.append(f"{key}={remaining.pop(key)}")
+        else:
+            out.append(line)
+    for key, value in remaining.items():
+        out.append(f"{key}={value}")
+    env_path.write_text("\n".join(out) + "\n")

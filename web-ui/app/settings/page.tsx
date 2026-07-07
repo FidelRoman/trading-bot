@@ -3,6 +3,7 @@
    Los porcentajes se muestran en % y se envían como fracción. */
 
 import { useEffect, useState } from "react";
+import AccountCard from "@/components/AccountCard";
 import { getJSON, postJSON } from "@/lib/api";
 import type { BotSettings } from "@/lib/types";
 
@@ -74,6 +75,8 @@ export default function Settings() {
     ));
 
   return (
+    <>
+    <AccountCard />
     <div className="card narrow">
       <div className="card-head"><div className="card-title">⚙ BOT SETTINGS — ESTRATEGIA</div></div>
       <div className="form-grid">{group("estrategia")}</div>
@@ -86,5 +89,6 @@ export default function Settings() {
         </span>
       </div>
     </div>
+    </>
   );
 }

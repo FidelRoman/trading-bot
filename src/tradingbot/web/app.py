@@ -91,6 +91,9 @@ async def lifespan(app: FastAPI):
     async def price_pump() -> None:
         while True:
             try:
+                # Leer siempre app.state.broker: puede cambiar en caliente
+                # al editar credenciales desde la interfaz
+                broker = app.state.broker
                 if hub.busy and broker.connected:
                     prices = await asyncio.to_thread(broker.current_prices)
                     open_trades = await asyncio.to_thread(broker.open_trades)
@@ -115,7 +118,7 @@ async def lifespan(app: FastAPI):
         pump_task.cancel()
         engine_task.cancel()
         await asyncio.gather(engine_task, pump_task, return_exceptions=True)
-        await asyncio.to_thread(broker.disconnect)
+        await asyncio.to_thread(app.state.broker.disconnect)
 
 
 app = FastAPI(title="EUR/USD Bollinger Bot", lifespan=lifespan)
@@ -252,6 +255,107 @@ async def close_all():
     if closed:
         app.state.store.log("warn", f"Cierre manual de {closed} posición(es) solicitado")
     return {"ok": not errors, "closed": closed, "errors": errors}
+
+
+@app.get("/api/credentials")
+async def get_credentials():
+    """Estado de las credenciales. NUNCA devuelve la contraseña."""
+    import os
+
+    broker = app.state.broker
+    mode = getattr(broker, "mode", "simulado")
+    account = {}
+    if broker.connected and mode != "simulado":
+        try:
+            account = await asyncio.to_thread(broker.account_info)
+        except Exception:
+            pass
+    return {
+        "user": os.getenv("FXCM_USER", ""),
+        "has_password": bool(os.getenv("FXCM_PASS", "")),
+        "connection": os.getenv("FXCM_CONNECTION", "Demo"),
+        "mode": mode,
+        "connected": broker.connected,
+        "is_real": mode == "fxcm-real",
+        "account_id": account.get("account_id"),
+        "balance": account.get("balance"),
+    }
+
+
+@app.post("/api/credentials")
+async def set_credentials(payload: dict = Body(...)):
+    """Guarda credenciales en .env, valida con login real y hace swap del
+    bróker en caliente. connection="auto" prueba Demo y luego Real; si la
+    cuenta resulta ser REAL, el bot queda pausado automáticamente."""
+    import os
+
+    from ..broker import FxcmBroker
+    from ..config import FxcmCredentials, update_env_file
+
+    user = str(payload.get("user", "")).strip()
+    password = str(payload.get("password", "")).strip()
+    connection = str(payload.get("connection", "auto"))
+    if connection not in ("auto", "Demo", "Real"):
+        return {"ok": False, "error": "Conexión inválida"}
+
+    # Contraseña vacía = conservar la actual
+    if not password:
+        password = os.getenv("FXCM_PASS", "")
+    if not user or not password:
+        return {"ok": False, "error": "Usuario y contraseña son obligatorios"}
+
+    url = os.getenv("FXCM_URL", "http://www.fxcorporate.com/Hosts.jsp")
+    attempts = ["Demo", "Real"] if connection == "auto" else [connection]
+    new_broker = None
+    used_connection = None
+    errors: list[str] = []
+    for conn in attempts:
+        candidate = FxcmBroker(FxcmCredentials(user=user, password=password, connection=conn, url=url))
+        try:
+            await asyncio.to_thread(candidate.connect)
+            new_broker = candidate
+            used_connection = conn
+            break
+        except Exception as e:
+            errors.append(f"{conn}: {e}")
+    if new_broker is None:
+        return {"ok": False, "error": "Login fallido — " + " | ".join(errors)}
+
+    # Persistir y hacer swap en caliente
+    update_env_file({"FXCM_USER": user, "FXCM_PASS": password, "FXCM_CONNECTION": used_connection})
+    os.environ.update(
+        {"FXCM_USER": user, "FXCM_PASS": password, "FXCM_CONNECTION": used_connection}
+    )
+    old = app.state.broker
+    app.state.broker = new_broker
+    app.state.engine.broker = new_broker
+    app.state.backtest.broker = new_broker
+    try:
+        await asyncio.to_thread(old.disconnect)
+    except Exception:
+        pass
+
+    is_real = used_connection == "Real"
+    if is_real:
+        # Cuenta con dinero real: el bot nunca arranca solo
+        app.state.engine.pause()
+        app.state.store.log(
+            "warn",
+            "CUENTA REAL conectada — bot pausado automáticamente; actívalo solo con una estrategia validada",
+        )
+    else:
+        app.state.store.log("info", f"Credenciales actualizadas: cuenta {used_connection}")
+
+    info = await asyncio.to_thread(new_broker.account_info)
+    await app.state.hub.broadcast({"type": "status", "status": app.state.engine.status()})
+    return {
+        "ok": True,
+        "connection": used_connection,
+        "is_real": is_real,
+        "account_id": info.get("account_id"),
+        "balance": info.get("balance"),
+        "paused": app.state.engine.status()["paused"],
+    }
 
 
 @app.get("/api/backtest")

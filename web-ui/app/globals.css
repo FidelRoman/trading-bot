@@ -75,6 +75,7 @@ a { color: inherit; text-decoration: none; }
 }
 .chip.ok { border-color: #2c5a41; color: var(--green); }
 .chip.warn { border-color: #5c4a25; color: var(--amber); }
+.chip.real { border-color: #7a2f2c; color: var(--red); background: rgba(240, 113, 106, 0.08); font-weight: 800; }
 
 /* ================= main / topbar ================= */
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -261,6 +262,8 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
 .form-actions { display: flex; align-items: center; gap: 14px; margin-top: 20px; flex-wrap: wrap; }
 .hint { font-size: 11px; color: var(--dim); }
 .hint.ok { color: var(--green); }
+.hint.err { color: var(--red); }
+.hint b { color: var(--text); }
 
 /* ================= backtesting ================= */
 .bt-form {
