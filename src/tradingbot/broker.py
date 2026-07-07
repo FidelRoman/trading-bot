@@ -241,10 +241,14 @@ class FxcmBroker:
     def close_trade(self, trade_id: str) -> str:
         with self._lock:
             fx = self._fx_or_raise()
-            trade = Common.get_trade(fx, self._account_id, trade_id)
+            # Nota: Common.get_trade busca por offer_id, no por trade_id
+            trade = None
+            for t in fx.get_table(ForexConnect.TRADES):
+                if str(t.trade_id) == str(trade_id):
+                    trade = t
+                    break
             if trade is None:
                 raise RuntimeError(f"Trade {trade_id} no encontrado")
-            offer = Common.get_offer(fx, INSTRUMENT)
             opposite = (
                 fxcorepy.Constants.SELL
                 if trade.buy_sell == fxcorepy.Constants.BUY
@@ -252,7 +256,7 @@ class FxcmBroker:
             )
             request = fx.create_order_request(
                 order_type=fxcorepy.Constants.Orders.TRUE_MARKET_CLOSE,
-                OFFER_ID=offer.offer_id,
+                OFFER_ID=str(trade.offer_id),
                 ACCOUNT_ID=self._account_id,
                 BUY_SELL=opposite,
                 AMOUNT=int(trade.amount),

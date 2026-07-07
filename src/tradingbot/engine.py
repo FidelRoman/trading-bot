@@ -22,6 +22,7 @@ SETTING_BOUNDS = {
     "bb_std": (1.0, 3.0, float),
     "atr_period": (5, 50, int),
     "sl_atr_mult": (0.5, 5.0, float),
+    "min_band_width_pips": (0.0, 50.0, float),
     "risk_per_trade": (0.001, 0.02, float),
     "daily_loss_limit": (0.01, 0.10, float),
     "max_trades_per_day": (1, 20, int),
@@ -85,6 +86,7 @@ class BotEngine:
             bb_std=float(o.get("bb_std", b.bb_std)),
             atr_period=int(o.get("atr_period", b.atr_period)),
             sl_atr_mult=float(o.get("sl_atr_mult", b.sl_atr_mult)),
+            min_band_width_pips=float(o.get("min_band_width_pips", b.min_band_width_pips)),
         )
 
     def risk_params(self) -> RiskParams:
@@ -104,6 +106,7 @@ class BotEngine:
             "bb_std": sp.bb_std,
             "atr_period": sp.atr_period,
             "sl_atr_mult": sp.sl_atr_mult,
+            "min_band_width_pips": sp.min_band_width_pips,
             "risk_per_trade": rp.risk_per_trade,
             "daily_loss_limit": rp.daily_loss_limit,
             "max_trades_per_day": rp.max_trades_per_day,

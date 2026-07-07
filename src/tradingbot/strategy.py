@@ -68,6 +68,11 @@ def compute_signals(df: pd.DataFrame, p: StrategyParams) -> pd.Series:
     long_sig = (prev_close < prev_lower) & (close > lower) & (close < d["bb_mid"])
     short_sig = (prev_close > prev_upper) & (close < upper) & (close > d["bb_mid"])
 
+    if p.min_band_width_pips > 0:
+        wide = (upper - lower) / PIP >= p.min_band_width_pips
+        long_sig &= wide
+        short_sig &= wide
+
     out = pd.Series(np.nan, index=d.index, dtype=object)
     out[long_sig] = LONG
     out[short_sig] = SHORT

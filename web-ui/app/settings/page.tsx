@@ -19,6 +19,7 @@ const FIELDS: {
   { key: "bb_std", label: "DESVIACIÓN STD", min: 1, max: 3, step: 0.1, group: "estrategia" },
   { key: "atr_period", label: "PERÍODO ATR", min: 5, max: 50, step: 1, group: "estrategia" },
   { key: "sl_atr_mult", label: "MULT. STOP (×ATR)", min: 0.5, max: 5, step: 0.1, group: "estrategia" },
+  { key: "min_band_width_pips", label: "ANCHO MÍN. BANDAS (PIPS)", min: 0, max: 50, step: 1, group: "estrategia" },
   { key: "risk_per_trade", label: "RIESGO POR TRADE (%)", min: 0.1, max: 2, step: 0.1, pct: true, group: "riesgo" },
   { key: "daily_loss_limit", label: "LÍMITE PÉRDIDA DIARIA (%)", min: 1, max: 10, step: 0.5, pct: true, group: "riesgo" },
   { key: "max_trades_per_day", label: "MÁX. TRADES / DÍA", min: 1, max: 20, step: 1, group: "riesgo" },

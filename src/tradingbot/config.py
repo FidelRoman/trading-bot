@@ -21,6 +21,9 @@ class StrategyParams:
     bb_std: float = 2.0
     atr_period: int = 14
     sl_atr_mult: float = 1.5
+    # No entrar si (banda sup - banda inf) < este mínimo en pips: con bandas
+    # apretadas el TP en la banda media no cubre ni el spread. 0 = sin filtro.
+    min_band_width_pips: float = 0.0
 
 
 @dataclass(frozen=True)

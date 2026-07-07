@@ -89,6 +89,7 @@ export interface BotSettings {
   bb_std: number;
   atr_period: number;
   sl_atr_mult: number;
+  min_band_width_pips: number;
   risk_per_trade: number;
   daily_loss_limit: number;
   max_trades_per_day: number;
