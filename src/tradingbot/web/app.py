@@ -13,7 +13,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -94,7 +94,12 @@ async def lifespan(app: FastAPI):
                     open_trades = await asyncio.to_thread(broker.open_trades)
                     floating = sum(t.get("gross_pl", 0.0) for t in open_trades)
                     await hub.broadcast(
-                        {"type": "tick", "prices": prices, "floating_pl": round(floating, 2)}
+                        {
+                            "type": "tick",
+                            "prices": prices,
+                            "floating_pl": round(floating, 2),
+                            "positions": open_trades,
+                        }
                     )
             except Exception:
                 log.exception("price_pump")
@@ -124,13 +129,19 @@ async def status():
     return app.state.engine.status()
 
 
+VALID_TF = {"m5", "m15", "m30", "h1", "h4"}
+
+
 @app.get("/api/candles")
-async def candles(count: int = 200):
-    settings = load_settings()
-    df = await asyncio.to_thread(app.state.broker.get_candles, count + settings.strategy.bb_period)
+async def candles(count: int = 200, tf: str = "m15"):
+    tf = tf if tf in VALID_TF else "m15"
+    params = app.state.engine.strategy_params()
+    df = await asyncio.to_thread(
+        lambda: app.state.broker.get_candles(count + params.bb_period, timeframe=tf)
+    )
     if df.empty:
         return {"candles": [], "bands": []}
-    d = add_indicators(df, settings.strategy)
+    d = add_indicators(df, params)
     d = d.tail(count)
     ts = [int(t.timestamp()) for t in d.index]
     candles_out = [
@@ -172,6 +183,63 @@ async def control(action: str):
     status = engine.status()
     await app.state.hub.broadcast({"type": "status", "status": status})
     return {"ok": True, "status": status}
+
+
+@app.get("/api/settings")
+async def get_settings():
+    return app.state.engine.current_settings()
+
+
+@app.post("/api/settings")
+async def set_settings(payload: dict = Body(...)):
+    result = app.state.engine.update_settings(payload)
+    await app.state.hub.broadcast({"type": "status", "status": app.state.engine.status()})
+    return {"ok": True, "settings": result}
+
+
+@app.get("/api/positions")
+async def positions():
+    return await asyncio.to_thread(app.state.broker.open_trades)
+
+
+@app.post("/api/manual/{side}")
+async def manual(side: str, payload: dict = Body(...)):
+    result = await asyncio.to_thread(
+        app.state.engine.manual_order,
+        side,
+        float(payload.get("lots", 0.01)),
+        float(payload.get("sl_pips", 0)),
+        float(payload.get("tp_pips", 0)),
+    )
+    await app.state.hub.broadcast({"type": "status", "status": app.state.engine.status()})
+    return result
+
+
+@app.post("/api/close/{trade_id}")
+async def close_position(trade_id: str):
+    try:
+        app.state.store.set_state("manual_close", trade_id)
+        await asyncio.to_thread(app.state.broker.close_trade, trade_id)
+        app.state.store.log("warn", f"Cierre manual del trade {trade_id} solicitado")
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/close-all")
+async def close_all():
+    trades = await asyncio.to_thread(app.state.broker.open_trades)
+    closed, errors = 0, []
+    for t in trades:
+        try:
+            app.state.store.set_state("manual_close", t["trade_id"])
+            await asyncio.to_thread(app.state.broker.close_trade, t["trade_id"])
+            closed += 1
+        except Exception as e:
+            errors.append(str(e))
+    if closed:
+        app.state.store.log("warn", f"Cierre manual de {closed} posición(es) solicitado")
+    return {"ok": not errors, "closed": closed, "errors": errors}
 
 
 @app.websocket("/ws")

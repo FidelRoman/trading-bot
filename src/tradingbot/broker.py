@@ -133,12 +133,15 @@ class FxcmBroker:
         equity = float(getattr(account, "equity", 0.0)) or balance + float(
             getattr(account, "gross_pl", 0.0)
         )
+        used_margin = float(getattr(account, "used_margin", 0.0))
+        usable = float(getattr(account, "usable_margin", 0.0)) or max(equity - used_margin, 0.0)
         return {
             "account_id": str(account.account_id),
             "balance": balance,
             "equity": equity,
             "day_pl": float(getattr(account, "day_pl", 0.0)),
-            "used_margin": float(getattr(account, "used_margin", 0.0)),
+            "used_margin": used_margin,
+            "usable_margin": usable,
             "connection": self._creds.connection,
         }
 
@@ -221,6 +224,13 @@ class FxcmBroker:
             side, units, INSTRUMENT, stop_pips, take_profit, order_id,
         )
         return order_id
+
+    def open_position_pips(self, side: str, units: int, sl_pips: float, tp_pips: float) -> str:
+        """Orden a mercado con SL y TP expresados en pips (para órdenes manuales)."""
+        prices = self.current_prices()
+        ref = prices["ask"] if side == "long" else prices["bid"]
+        tp = ref + tp_pips * PIP if side == "long" else ref - tp_pips * PIP
+        return self.open_position(side, units, sl_pips, tp)
 
     def close_trade(self, trade_id: str) -> str:
         with self._lock:

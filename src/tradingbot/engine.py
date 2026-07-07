@@ -12,9 +12,22 @@ import time as _time
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable, Optional
 
-from .config import PIP, Settings
+from .config import PIP, RiskParams, Settings, StrategyParams
 from .store import Store
 from .strategy import entry_allowed, latest_signal, size_position, spread_ok
+
+# Rangos permitidos para ajustes desde la interfaz: clave -> (min, max, tipo)
+SETTING_BOUNDS = {
+    "bb_period": (10, 50, int),
+    "bb_std": (1.0, 3.0, float),
+    "atr_period": (5, 50, int),
+    "sl_atr_mult": (0.5, 5.0, float),
+    "risk_per_trade": (0.001, 0.02, float),
+    "daily_loss_limit": (0.01, 0.10, float),
+    "max_trades_per_day": (1, 20, int),
+    "max_spread_pips": (0.5, 5.0, float),
+    "fixed_units": (0, 500_000, int),  # 0 = tamaño automático por riesgo
+}
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +72,85 @@ class BotEngine:
 
     def stop(self) -> None:
         self._stop = True
+
+    # -- ajustes en runtime (editables desde la web) -----------------------
+
+    def _overrides(self) -> dict:
+        return self.store.get_state("settings_override", {}) or {}
+
+    def strategy_params(self) -> StrategyParams:
+        o, b = self._overrides(), self.s.strategy
+        return StrategyParams(
+            bb_period=int(o.get("bb_period", b.bb_period)),
+            bb_std=float(o.get("bb_std", b.bb_std)),
+            atr_period=int(o.get("atr_period", b.atr_period)),
+            sl_atr_mult=float(o.get("sl_atr_mult", b.sl_atr_mult)),
+        )
+
+    def risk_params(self) -> RiskParams:
+        o, b = self._overrides(), self.s.risk
+        return RiskParams(
+            risk_per_trade=float(o.get("risk_per_trade", b.risk_per_trade)),
+            daily_loss_limit=float(o.get("daily_loss_limit", b.daily_loss_limit)),
+            max_trades_per_day=int(o.get("max_trades_per_day", b.max_trades_per_day)),
+            max_spread_pips=float(o.get("max_spread_pips", b.max_spread_pips)),
+            min_lot=b.min_lot,
+        )
+
+    def current_settings(self) -> dict:
+        sp, rp = self.strategy_params(), self.risk_params()
+        return {
+            "bb_period": sp.bb_period,
+            "bb_std": sp.bb_std,
+            "atr_period": sp.atr_period,
+            "sl_atr_mult": sp.sl_atr_mult,
+            "risk_per_trade": rp.risk_per_trade,
+            "daily_loss_limit": rp.daily_loss_limit,
+            "max_trades_per_day": rp.max_trades_per_day,
+            "max_spread_pips": rp.max_spread_pips,
+            "fixed_units": int(self._overrides().get("fixed_units", 0)),
+        }
+
+    def update_settings(self, payload: dict) -> dict:
+        """Valida, acota y persiste ajustes; aplican desde la próxima vela."""
+        merged = self._overrides()
+        for key, raw in payload.items():
+            if key not in SETTING_BOUNDS:
+                continue
+            lo, hi, cast = SETTING_BOUNDS[key]
+            try:
+                merged[key] = min(max(cast(float(raw)), lo), hi)
+            except (TypeError, ValueError):
+                continue
+        self.store.set_state("settings_override", merged)
+        self.store.log("info", "Ajustes actualizados desde la interfaz")
+        return self.current_settings()
+
+    # -- órdenes manuales ---------------------------------------------------
+
+    def manual_order(self, side: str, lots: float, sl_pips: float, tp_pips: float) -> dict:
+        """Orden manual desde la UI. 1 lote = 100k unidades (0.10 = 10k)."""
+        if side not in ("long", "short"):
+            return {"ok": False, "error": "Dirección inválida"}
+        if self.store.current_open_trade() is not None:
+            return {"ok": False, "error": "Ya hay una posición del bot abierta"}
+        if sl_pips <= 0 or tp_pips <= 0:
+            return {"ok": False, "error": "SL y TP deben ser mayores que 0"}
+        units = self.broker.normalize_units(int(lots * 100_000))
+        if units <= 0:
+            return {"ok": False, "error": "Lote demasiado pequeño (mínimo 0.01)"}
+        try:
+            order_id = self.broker.open_position_pips(side, units, sl_pips, tp_pips)
+        except Exception as e:
+            log.exception("Orden manual fallida")
+            return {"ok": False, "error": str(e)}
+        self.store.open_trade(order_id, side, units)
+        self.store.log(
+            "warn",
+            f"ORDEN MANUAL {('COMPRA' if side == 'long' else 'VENTA')} {units} EUR/USD "
+            f"— SL {sl_pips:.1f} / TP {tp_pips:.1f} pips (orden {order_id})",
+        )
+        return {"ok": True, "order_id": order_id, "units": units}
 
     def _halted_today(self) -> bool:
         halted_until = self.store.get_state("halted_until")
@@ -135,7 +227,11 @@ class BotEngine:
         if info:
             direction = 1 if rec["side"] == "long" else -1
             pips = direction * (info["close_rate"] - (rec["entry_rate"] or info["close_rate"])) / PIP
-            reason = "tp" if info["gross_pl"] > 0 else "sl"
+            if self.store.get_state("manual_close") == rec["trade_id"]:
+                reason = "manual"
+                self.store.set_state("manual_close", None)
+            else:
+                reason = "tp" if info["gross_pl"] > 0 else "sl"
             self.store.close_trade(rec["id"], info["close_rate"], info["gross_pl"], round(pips, 1), reason)
             self.store.log(
                 "info",
@@ -149,16 +245,17 @@ class BotEngine:
     # -- decisión por vela -------------------------------------------------
 
     def _candle_tick(self, boundary: datetime) -> None:
+        sp, rp = self.strategy_params(), self.risk_params()
         candles = self.broker.get_candles(count=250)
         if candles.empty:
             self.store.log("warn", "Sin velas del bróker")
             return
         now = datetime.now(timezone.utc)
         candles = candles[[ts + timedelta(seconds=CANDLE_SECONDS) <= now for ts in candles.index]]
-        if candles.empty or len(candles) < self.s.strategy.bb_period + 2:
+        if candles.empty or len(candles) < sp.bb_period + 2:
             return
 
-        sig = latest_signal(candles, self.s.strategy)
+        sig = latest_signal(candles, sp)
         if sig is None:
             return
         self.store.log("info", f"Señal {sig.side.upper()} @ {sig.ref_close:.5f}")
@@ -172,19 +269,19 @@ class BotEngine:
         if not entry_allowed(now):
             self.store.log("info", "Señal ignorada: fuera de sesión permitida")
             return
-        if self.store.trades_today() >= self.s.risk.max_trades_per_day:
+        if self.store.trades_today() >= rp.max_trades_per_day:
             self.store.log("warn", "Señal ignorada: máximo de trades diarios")
             return
 
         prices = self.broker.current_prices()
-        if not spread_ok(prices["bid"], prices["ask"], self.s.risk.max_spread_pips):
+        if not spread_ok(prices["bid"], prices["ask"], rp.max_spread_pips):
             self.store.log("warn", f"Señal ignorada: spread {prices['spread_pips']} pips")
             return
 
         info = self.broker.account_info()
         equity = info["equity"]
         day_start = self.store.day_start_equity() or equity
-        if day_start > 0 and (equity - day_start) / day_start <= -self.s.risk.daily_loss_limit:
+        if day_start > 0 and (equity - day_start) / day_start <= -rp.daily_loss_limit:
             self.store.set_state(
                 "halted_until",
                 (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat(),
@@ -192,7 +289,11 @@ class BotEngine:
             self.store.log("error", "Límite de pérdida diaria alcanzado: bot en pausa hasta mañana")
             return
 
-        units = size_position(equity, self.s.risk.risk_per_trade, sig.stop_distance, self.s.risk.min_lot)
+        fixed = int(self._overrides().get("fixed_units", 0))
+        if fixed > 0:
+            units = fixed
+        else:
+            units = size_position(equity, rp.risk_per_trade, sig.stop_distance, rp.min_lot)
         units = self.broker.normalize_units(units)
         if units <= 0:
             self.store.log("warn", "Señal ignorada: tamaño calculado 0 (equity/SL)")
@@ -224,6 +325,7 @@ class BotEngine:
             if equity and day_start
             else 0.0
         )
+        daily_pl_abs = round(equity - day_start, 2) if equity and day_start else 0.0
         return {
             "running": self.running and not self._halted_today(),
             "paused": not self.running,
@@ -232,8 +334,10 @@ class BotEngine:
             "mode": getattr(self.broker, "mode", "fxcm"),
             "account": info,
             "daily_pl_pct": daily_pl_pct,
+            "daily_pl_abs": daily_pl_abs,
+            "max_drawdown_pct": self.store.max_drawdown_pct(),
             "trades_today": self.store.trades_today(),
-            "max_trades_per_day": self.s.risk.max_trades_per_day,
+            "max_trades_per_day": self.risk_params().max_trades_per_day,
             "open_trade": self.store.current_open_trade(),
             "stats": self.store.stats(),
             "last_candle": self._last_processed.isoformat() if self._last_processed else None,

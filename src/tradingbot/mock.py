@@ -74,10 +74,13 @@ class MockBroker:
                 "time": datetime.now(timezone.utc).isoformat(),
             }
 
+    _TF_FREQ = {"m1": "1min", "m5": "5min", "m15": "15min", "m30": "30min", "h1": "1h", "h4": "4h"}
+
     def get_candles(self, count: int = 300, date_from=None, date_to=None, timeframe="m15") -> pd.DataFrame:
+        freq = self._TF_FREQ.get(timeframe, "15min")
         with self._lock:
             self._advance()
-            ohlc = self._m1.resample("15min").agg(["first", "max", "min", "last"]).dropna()
+            ohlc = self._m1.resample(freq).agg(["first", "max", "min", "last"]).dropna()
         ohlc.columns = ["open", "high", "low", "close"]
         ohlc["volume"] = 100
         ohlc.index.name = "time"
@@ -94,12 +97,16 @@ class MockBroker:
     def account_info(self) -> dict:
         with self._lock:
             self._advance()
+            equity = self._equity + self._floating_pl()
+            # margen aproximado 30:1 sobre el nominal abierto
+            used = sum(t["units"] for t in self._trades) * self._price / 30
             return {
                 "account_id": "SIM-0001",
                 "balance": round(self._equity, 2),
-                "equity": round(self._equity + self._floating_pl(), 2),
+                "equity": round(equity, 2),
                 "day_pl": 0.0,
-                "used_margin": 0.0,
+                "used_margin": round(used, 2),
+                "usable_margin": round(max(equity - used, 0.0), 2),
                 "connection": "Simulado",
             }
 
@@ -147,6 +154,13 @@ class MockBroker:
                 }
             )
             return tid
+
+    def open_position_pips(self, side: str, units: int, sl_pips: float, tp_pips: float) -> str:
+        with self._lock:
+            self._advance()
+            ref = self._price + (_SPREAD if side == "long" else 0.0)
+        tp = ref + tp_pips * PIP if side == "long" else ref - tp_pips * PIP
+        return self.open_position(side, units, sl_pips, tp)
 
     def close_trade(self, trade_id: str) -> str:
         with self._lock:

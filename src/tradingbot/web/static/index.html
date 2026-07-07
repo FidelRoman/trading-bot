@@ -3,86 +3,226 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BOLLINGER·BOT — EUR/USD M15</title>
+<title>FX COMMAND CENTER — EUR/USD M15</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=JetBrains+Mono:wght@400;600;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;600;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/styles.css">
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
-<div class="bg-grid"></div>
+<div class="app">
 
-<header class="topbar">
-  <div class="brand">
-    <span class="brand-mark">◈</span>
-    <span class="brand-name">BOLLINGER<span class="thin">·BOT</span></span>
-    <span class="brand-sub">EUR/USD · M15 · BB(20,2)</span>
-  </div>
-  <div class="top-controls">
-    <span id="mode-chip" class="chip">—</span>
-    <span id="conn-chip" class="chip">SIN CONEXIÓN</span>
-    <span id="status-pill" class="pill"><span class="dot"></span><span id="status-text">…</span></span>
-    <button id="toggle-btn" class="btn">PAUSAR</button>
-  </div>
-</header>
-
-<main class="grid">
-
-  <section class="card ticker" id="ticker-card">
-    <div class="card-title">EUR / USD <span class="live-tag" id="live-tag">LIVE</span></div>
-    <div class="ticker-price">
-      <div class="side">
-        <div class="lbl">BID</div>
-        <div class="px" id="bid">—</div>
-      </div>
-      <div class="side">
-        <div class="lbl">ASK</div>
-        <div class="px" id="ask">—</div>
+  <aside class="sidebar">
+    <div class="side-brand">
+      <div class="avatar">FX</div>
+      <div>
+        <div class="brand-title">FX-PRO TRADER</div>
+        <div class="brand-sub"><span class="dot-live" id="session-dot"></span><span id="session-text">Sesión activa</span></div>
       </div>
     </div>
-    <div class="ticker-foot">
-      <span>SPREAD <b id="spread">—</b> pips</span>
-      <span>P&amp;L FLOTANTE <b id="floating">—</b></span>
+
+    <button class="btn-new" data-goto="settings">＋&nbsp; AJUSTAR ESTRATEGIA</button>
+
+    <nav class="nav">
+      <a class="nav-item active" data-view="dashboard"><span class="ico">▦</span> Dashboard</a>
+      <a class="nav-item" data-view="settings"><span class="ico">⚙</span> Ajustes del Bot</a>
+      <a class="nav-item" data-view="history"><span class="ico">⟲</span> Historial</a>
+      <a class="nav-item" data-view="activity"><span class="ico">∿</span> Monitor de Actividad</a>
+    </nav>
+
+    <div class="side-foot">
+      <span class="chip" id="mode-chip">—</span>
+      <span class="chip" id="conn-chip">SIN CONEXIÓN</span>
     </div>
-  </section>
+  </aside>
 
-  <section class="card metrics">
-    <div class="metric"><div class="m-lbl">EQUITY</div><div class="m-val" id="m-equity">—</div></div>
-    <div class="metric"><div class="m-lbl">P&amp;L HOY</div><div class="m-val" id="m-daypl">—</div></div>
-    <div class="metric"><div class="m-lbl">WIN RATE</div><div class="m-val" id="m-winrate">—</div></div>
-    <div class="metric"><div class="m-lbl">PROFIT FACTOR</div><div class="m-val" id="m-pf">—</div></div>
-    <div class="metric"><div class="m-lbl">TRADES HOY</div><div class="m-val" id="m-trades-today">—</div></div>
-    <div class="metric"><div class="m-lbl">POSICIÓN</div><div class="m-val" id="m-position">FLAT</div></div>
-  </section>
+  <div class="main">
 
-  <section class="card span12">
-    <div class="card-title">VELAS 15M + BANDAS DE BOLLINGER</div>
-    <div id="chart-candles" class="chart tall"></div>
-  </section>
+    <header class="topbar">
+      <h1 class="app-title">FX COMMAND CENTER</h1>
+      <div class="top-actions">
+        <span id="status-pill" class="pill"><span class="dot"></span><span id="status-text">…</span></span>
+        <button id="btn-start" class="btn btn-start">INICIAR BOT</button>
+        <button id="btn-stop" class="btn btn-stop">DETENER BOT</button>
+      </div>
+    </header>
 
-  <section class="card span6">
-    <div class="card-title">CURVA DE EQUITY</div>
-    <div id="chart-equity" class="chart"></div>
-  </section>
-
-  <section class="card span6">
-    <div class="card-title">ÚLTIMAS OPERACIONES</div>
-    <div class="table-wrap">
-      <table id="trades-table">
-        <thead><tr><th>DIR</th><th>UNIDADES</th><th>ENTRADA</th><th>SALIDA</th><th>PIPS</th><th>P&amp;L</th><th>MOTIVO</th></tr></thead>
-        <tbody></tbody>
-      </table>
-      <div class="empty" id="trades-empty">Sin operaciones todavía</div>
+    <div class="metric-row">
+      <div class="metric-card">
+        <div class="m-lbl">TOTAL EQUITY</div>
+        <div class="m-val" id="m-equity">—</div>
+        <div class="m-sub" id="m-equity-sub">—</div>
+      </div>
+      <div class="metric-card">
+        <div class="m-lbl">FREE MARGIN</div>
+        <div class="m-val" id="m-margin">—</div>
+        <div class="m-sub" id="m-margin-sub">—</div>
+      </div>
+      <div class="metric-card">
+        <div class="m-lbl">DAILY PNL</div>
+        <div class="m-val" id="m-daypnl">—</div>
+        <div class="m-sub" id="m-daypnl-sub">—</div>
+      </div>
+      <div class="metric-card">
+        <div class="m-lbl">MAX DRAWDOWN</div>
+        <div class="m-val" id="m-dd">—</div>
+        <div class="m-sub">Target: &lt; 5%</div>
+      </div>
     </div>
-  </section>
 
-  <section class="card span12">
-    <div class="card-title">REGISTRO DEL BOT</div>
-    <div id="log-feed" class="log-feed"></div>
-  </section>
+    <!-- ============ DASHBOARD ============ -->
+    <section class="view active" id="view-dashboard">
+      <div class="dash-grid">
+        <div class="col-main">
 
-</main>
+          <div class="card">
+            <div class="chart-head">
+              <div class="pair">
+                <span class="pair-name">EUR/USD</span>
+                <span class="pair-price" id="hdr-price">—</span>
+                <span class="live-tag" id="live-tag"><span class="dot-live"></span>LIVE</span>
+              </div>
+              <div class="tf-group" id="tf-group">
+                <button class="tf-btn" data-tf="m5">M5</button>
+                <button class="tf-btn active" data-tf="m15">M15</button>
+                <button class="tf-btn" data-tf="h1">H1</button>
+                <button class="tf-btn" data-tf="h4">H4</button>
+              </div>
+            </div>
+            <div id="chart-candles" class="chart tall"></div>
+            <div class="chart-foot">
+              <span>BID <b id="bid">—</b></span>
+              <span>ASK <b id="ask">—</b></span>
+              <span>SPREAD <b id="spread">—</b> pips</span>
+              <span>P&amp;L FLOTANTE <b id="floating">—</b></span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div class="card-title">⚙ STRATEGY CONTROLS: BOLLINGER BB(<span id="ctl-bb">20,2</span>)</div>
+              <div class="auto-wrap">
+                <span class="m-lbl">AUTO-TRADING</span>
+                <label class="switch"><input type="checkbox" id="auto-toggle"><span class="track"></span></label>
+              </div>
+            </div>
+            <div class="controls-grid">
+              <div class="ctl">
+                <div class="m-lbl">LOT SIZE</div>
+                <div class="stepper" id="st-lots">
+                  <button class="st-dec">−</button>
+                  <input id="c-lots" value="0.10" inputmode="decimal">
+                  <button class="st-inc">＋</button>
+                </div>
+              </div>
+              <div class="ctl">
+                <div class="m-lbl">TAKE PROFIT (PIPS)</div>
+                <div class="stepper" id="st-tp">
+                  <button class="st-dec">−</button>
+                  <input id="c-tp" value="20.0" inputmode="decimal">
+                  <button class="st-inc">＋</button>
+                </div>
+              </div>
+              <div class="ctl">
+                <div class="m-lbl">STOP LOSS (PIPS)</div>
+                <div class="stepper" id="st-sl">
+                  <button class="st-dec">−</button>
+                  <input id="c-sl" value="15.0" inputmode="decimal">
+                  <button class="st-inc">＋</button>
+                </div>
+              </div>
+              <div class="ctl force-col">
+                <button class="btn btn-buy" id="btn-force-buy">FORCE BUY</button>
+                <button class="btn btn-sell" id="btn-force-sell">FORCE SELL</button>
+              </div>
+            </div>
+            <div class="manual-msg" id="manual-msg"></div>
+          </div>
+
+        </div>
+        <div class="col-side">
+
+          <div class="card">
+            <div class="card-head">
+              <div class="card-title">ACTIVE POSITIONS (<span id="pos-count">0</span>)</div>
+              <button class="link-btn danger" id="btn-close-all">CLOSE ALL</button>
+            </div>
+            <div id="positions-list"></div>
+            <div class="empty" id="pos-empty">Sin posiciones abiertas</div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div class="card-title">▤ SYSTEM LOGS</div>
+              <a class="link-btn" data-goto="activity">VER TODO</a>
+            </div>
+            <div id="log-feed" class="log-feed"></div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ AJUSTES ============ -->
+    <section class="view" id="view-settings">
+      <div class="card narrow">
+        <div class="card-head"><div class="card-title">⚙ BOT SETTINGS — ESTRATEGIA</div></div>
+        <div class="form-grid">
+          <label>PERÍODO BOLLINGER<input id="s-bb_period" type="number" min="10" max="50" step="1"></label>
+          <label>DESVIACIÓN STD<input id="s-bb_std" type="number" min="1" max="3" step="0.1"></label>
+          <label>PERÍODO ATR<input id="s-atr_period" type="number" min="5" max="50" step="1"></label>
+          <label>MULT. STOP (×ATR)<input id="s-sl_atr_mult" type="number" min="0.5" max="5" step="0.1"></label>
+        </div>
+        <div class="card-head mt"><div class="card-title">▲ BOT SETTINGS — RIESGO</div></div>
+        <div class="form-grid">
+          <label>RIESGO POR TRADE (%)<input id="s-risk_per_trade" type="number" min="0.1" max="2" step="0.1"></label>
+          <label>LÍMITE PÉRDIDA DIARIA (%)<input id="s-daily_loss_limit" type="number" min="1" max="10" step="0.5"></label>
+          <label>MÁX. TRADES / DÍA<input id="s-max_trades_per_day" type="number" min="1" max="20" step="1"></label>
+          <label>SPREAD MÁX. (PIPS)<input id="s-max_spread_pips" type="number" min="0.5" max="5" step="0.1"></label>
+          <label>UNIDADES FIJAS (0 = AUTO)<input id="s-fixed_units" type="number" min="0" max="500000" step="1000"></label>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-start" id="btn-save-settings">GUARDAR AJUSTES</button>
+          <span class="hint" id="settings-msg">Los cambios aplican desde la próxima vela.</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ HISTORIAL ============ -->
+    <section class="view" id="view-history">
+      <div class="metric-row inner">
+        <div class="metric-card"><div class="m-lbl">TRADES</div><div class="m-val" id="h-trades">—</div></div>
+        <div class="metric-card"><div class="m-lbl">WIN RATE</div><div class="m-val" id="h-winrate">—</div></div>
+        <div class="metric-card"><div class="m-lbl">PROFIT FACTOR</div><div class="m-val" id="h-pf">—</div></div>
+        <div class="metric-card"><div class="m-lbl">PIPS NETOS</div><div class="m-val" id="h-pips">—</div></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div class="card-title">⟲ TRADE HISTORY</div></div>
+        <div class="table-wrap">
+          <table id="trades-table">
+            <thead><tr><th>DIR</th><th>UNIDADES</th><th>ENTRADA</th><th>SALIDA</th><th>PIPS</th><th>P&amp;L</th><th>MOTIVO</th><th>FECHA</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <div class="empty" id="trades-empty">Sin operaciones todavía</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ ACTIVIDAD ============ -->
+    <section class="view" id="view-activity">
+      <div class="card">
+        <div class="card-head"><div class="card-title">∿ EQUITY CURVE</div></div>
+        <div id="chart-equity" class="chart"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div class="card-title">▤ ACTIVITY MONITOR</div></div>
+        <div id="log-feed-full" class="log-feed grow"></div>
+      </div>
+    </section>
+
+  </div>
+</div>
 
 <script src="/static/app.js"></script>
 </body>

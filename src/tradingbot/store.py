@@ -155,6 +155,18 @@ class Store:
             ).fetchall()
         return [dict(r) for r in reversed(rows)]
 
+    def max_drawdown_pct(self) -> float:
+        """Máximo drawdown histórico (%) sobre la curva de equity registrada."""
+        with self._lock:
+            rows = self._db.execute("SELECT equity FROM equity ORDER BY ts ASC").fetchall()
+        peak, dd = None, 0.0
+        for r in rows:
+            e = float(r["equity"])
+            peak = e if peak is None or e > peak else peak
+            if peak:
+                dd = min(dd, (e - peak) / peak)
+        return round(dd * 100, 2)
+
     def day_start_equity(self) -> Optional[float]:
         today = datetime.now(timezone.utc).date().isoformat()
         with self._lock:
