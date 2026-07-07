@@ -188,48 +188,83 @@ def run_backtest(
     return BacktestResult(trades=trades, equity_curve=curve, initial_equity=initial_equity)
 
 
-def synthetic_df(days: int = 365, seed: int = 42) -> pd.DataFrame:
-    """Random walk m15 para probar el pipeline. NO representa el mercado real."""
+# Timeframes soportados y su frecuencia pandas
+TF_FREQ = {"m1": "1min", "m5": "5min", "m15": "15min", "m30": "30min",
+           "h1": "1h", "h4": "4h", "d1": "1D"}
+
+
+def synthetic_df(
+    days: int = 365,
+    seed: int = 42,
+    timeframe: str = "m15",
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+) -> pd.DataFrame:
+    """Random walk para probar el pipeline. NO representa el mercado real.
+
+    Con ``date_from``/``date_to`` genera ese rango exacto; si no, ``days``
+    hacia atrás desde ahora. La volatilidad por vela escala con √minutos.
+    """
     from datetime import timezone as _tz
 
+    freq = TF_FREQ.get(timeframe, "15min")
+    bar_minutes = pd.Timedelta(freq).total_seconds() / 60
+    if date_from is not None and date_to is not None:
+        idx = pd.date_range(start=date_from, end=date_to, freq=freq)
+    else:
+        n = max(int(days * 24 * 60 / bar_minutes), 50)
+        idx = pd.date_range(end=datetime.now(_tz.utc), periods=n, freq=freq)
+    n = len(idx)
+    if n < 30:
+        raise ValueError("Rango demasiado corto para el timeframe elegido")
     rng = np.random.default_rng(seed)
-    n = days * 96
-    steps = rng.normal(0, 0.00035, n) + 0.000002 * np.sin(np.arange(n) / 200)
+    vol = 0.00035 * (bar_minutes / 15) ** 0.5
+    steps = rng.normal(0, vol, n) + 0.000002 * np.sin(np.arange(n) / 200)
     close = 1.08 + np.cumsum(steps)
-    idx = pd.date_range(end=datetime.now(_tz.utc), periods=n, freq="15min")
-    high = close + np.abs(rng.normal(0, 0.0002, n))
-    low = close - np.abs(rng.normal(0, 0.0002, n))
+    high = close + np.abs(rng.normal(0, vol * 0.6, n))
+    low = close - np.abs(rng.normal(0, vol * 0.6, n))
     open_ = np.roll(close, 1)
     open_[0] = close[0]
     return pd.DataFrame({"open": open_, "high": high, "low": low, "close": close}, index=idx)
 
 
-def download_history(broker, months: int, cache_dir: Path, progress=None) -> pd.DataFrame:
-    """Descarga histórico m15 de FXCM por trozos de 90 días y lo cachea en CSV.
+def download_history(
+    broker,
+    date_from: datetime,
+    date_to: datetime,
+    timeframe: str = "m15",
+    cache_dir: Optional[Path] = None,
+    progress=None,
+) -> pd.DataFrame:
+    """Descarga histórico de FXCM por trozos de 90 días; cachea en CSV.
 
     ``progress`` es un callback opcional ``fn(str)`` para reportar avance.
     """
-    from datetime import timedelta, timezone as _tz
+    from datetime import timedelta
 
     chunks = []
-    end = datetime.now(_tz.utc)
-    cursor = end - timedelta(days=months * 30)
-    while cursor < end:
-        chunk_end = min(cursor + timedelta(days=90), end)
+    cursor = date_from
+    while cursor < date_to:
+        chunk_end = min(cursor + timedelta(days=90), date_to)
         if progress:
             progress(f"Descargando {cursor:%Y-%m-%d} → {chunk_end:%Y-%m-%d}")
-        chunks.append(broker.get_candles(count=0, date_from=cursor, date_to=chunk_end))
+        chunks.append(
+            broker.get_candles(count=0, date_from=cursor, date_to=chunk_end, timeframe=timeframe)
+        )
         cursor = chunk_end
     df = pd.concat(chunks)
     df = df[~df.index.duplicated(keep="first")].sort_index()
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    df.to_csv(cache_dir / f"eurusd_m15_{months}m.csv")
+    if cache_dir is not None:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        df.to_csv(cache_dir / f"eurusd_{timeframe}_{date_from:%Y%m%d}_{date_to:%Y%m%d}.csv")
     return df[["open", "high", "low", "close"]]
 
 
-def load_csv(path: str | Path) -> pd.DataFrame:
+def load_csv(path: str | Path, timeframe: str = "m15") -> pd.DataFrame:
     """Carga velas desde CSV genérico (time,open,high,low,close) o HistData M1
-    (``YYYYMMDD HHMMSS;O;H;L;C;V``) y las devuelve en m15 UTC."""
+    (``YYYYMMDD HHMMSS;O;H;L;C;V``) y las devuelve en el timeframe pedido (UTC).
+    Si el CSV es más fino que el timeframe, re-muestrea; si es más grueso, se
+    usa tal cual (no se puede inventar detalle)."""
     path = Path(path)
     sample = path.read_text(encoding="utf-8", errors="ignore")[:200]
     if ";" in sample.splitlines()[0]:
@@ -247,9 +282,10 @@ def load_csv(path: str | Path) -> pd.DataFrame:
     df = df.set_index("time").sort_index()
     df.index = df.index.tz_localize("UTC") if df.index.tz is None else df.index.tz_convert("UTC")
     ohlc = df[["open", "high", "low", "close"]].astype(float)
-    if len(ohlc) > 1 and (ohlc.index[1] - ohlc.index[0]) < pd.Timedelta(minutes=15):
+    freq = TF_FREQ.get(timeframe, "15min")
+    if len(ohlc) > 1 and (ohlc.index[1] - ohlc.index[0]) < pd.Timedelta(freq):
         ohlc = (
-            ohlc.resample("15min")
+            ohlc.resample(freq)
             .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
             .dropna()
         )

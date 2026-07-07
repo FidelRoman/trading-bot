@@ -25,28 +25,35 @@ def main() -> None:
     ap.add_argument("--csv", type=str, help="ruta a CSV de velas")
     ap.add_argument("--synthetic", action="store_true", help="datos sintéticos (prueba de pipeline)")
     ap.add_argument("--months", type=int, default=24, help="meses de histórico FXCM")
+    ap.add_argument("--tf", type=str, default="m15", help="timeframe: m5/m15/m30/h1/h4/d1")
     ap.add_argument("--equity", type=float, default=10_000.0)
     ap.add_argument("--spread", type=float, default=1.2, help="spread en pips")
     args = ap.parse_args()
 
     settings = load_settings()
     if args.csv:
-        df = load_csv(args.csv)
-        source = f"CSV {args.csv}"
+        df = load_csv(args.csv, timeframe=args.tf)
+        source = f"CSV {args.csv} ({args.tf})"
     elif args.synthetic:
-        df = synthetic_df()
+        df = synthetic_df(days=args.months * 30, timeframe=args.tf)
         source = "SINTÉTICO (no representa el mercado real)"
     else:
+        from datetime import datetime, timedelta, timezone
+
         from tradingbot.broker import FxcmBroker
 
         broker = FxcmBroker(settings.fxcm)
         print(f"Conectando a FXCM ({settings.fxcm.connection}) para descargar histórico…")
         broker.connect()
         try:
-            df = download_history(broker, args.months, ROOT / "data" / "history", progress=print)
+            end = datetime.now(timezone.utc)
+            df = download_history(
+                broker, end - timedelta(days=args.months * 30), end, args.tf,
+                ROOT / "data" / "history", progress=print,
+            )
         finally:
             broker.disconnect()
-        source = f"FXCM {args.months} meses"
+        source = f"FXCM {args.months} meses ({args.tf})"
 
     print(f"\nBacktest sobre {len(df)} velas m15 — fuente: {source}")
     result = run_backtest(

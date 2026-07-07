@@ -82,6 +82,10 @@ class FxcmBroker:
 
     # -- datos ----------------------------------------------------------
 
+    # ForexConnect usa minúscula para minutos y mayúscula para horas/días
+    _TF_FXCM = {"m1": "m1", "m5": "m5", "m15": "m15", "m30": "m30",
+                "h1": "H1", "h4": "H4", "d1": "D1"}
+
     def get_candles(
         self,
         count: int = 300,
@@ -90,9 +94,10 @@ class FxcmBroker:
         timeframe: str = TIMEFRAME,
     ) -> pd.DataFrame:
         """Velas Bid OHLC en UTC. Con count solo, trae las últimas ``count``."""
+        tf = self._TF_FXCM.get(timeframe.lower(), timeframe)
         with self._lock:
             fx = self._fx_or_raise()
-            history = fx.get_history(INSTRUMENT, timeframe, date_from, date_to, count)
+            history = fx.get_history(INSTRUMENT, tf, date_from, date_to, count)
         df = pd.DataFrame(history)
         if df.empty:
             return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])

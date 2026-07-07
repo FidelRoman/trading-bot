@@ -2,16 +2,30 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "dashboard-mock",
+      "name": "backend-mock",
       "runtimeExecutable": "env",
       "runtimeArgs": ["MOCK=1", "uv", "run", "uvicorn", "tradingbot.web.app:app", "--port", "8321"],
       "port": 8321
     },
     {
-      "name": "dashboard",
+      "name": "backend",
       "runtimeExecutable": "uv",
       "runtimeArgs": ["run", "uvicorn", "tradingbot.web.app:app", "--port", "8000"],
       "port": 8000
+    },
+    {
+      "name": "web-ui",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "BACKEND_URL=http://localhost:8321",
+        "NEXT_PUBLIC_BACKEND_PORT=8321",
+        "npm",
+        "--prefix",
+        "web-ui",
+        "run",
+        "dev"
+      ],
+      "port": 3000
     }
   ]
 }

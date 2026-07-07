@@ -20,16 +20,18 @@ Parámetros en `src/tradingbot/config.py` y `.env`, **editables en caliente desd
 la pestaña "Ajustes del Bot"** (validados y acotados en el servidor; aplican
 desde la próxima vela).
 
-## Dashboard web
+## Dashboard web (Next.js)
 
-Interfaz estilo FX Command Center con gestión completa del bot:
+Interfaz estilo FX Command Center con gestión completa del bot. Frontend en
+**Next.js** (`web-ui/`, puerto 3000) contra el backend FastAPI (API + bot):
 
 - **Dashboard**: velas 15m con bandas (timeframes M5/M15/H1/H4), ticker en vivo,
   posiciones activas con P&L y cierre individual/CLOSE ALL, órdenes manuales
   (Force Buy/Sell con lote, TP y SL en pips), toggle auto-trading, logs.
 - **Ajustes del Bot**: estrategia y riesgo editables en runtime.
 - **Backtesting**: simula la estrategia (con los ajustes actuales) sobre
-  histórico FXCM real, datos sintéticos o un CSV subido; métricas, veredicto,
+  histórico FXCM real, datos sintéticos o un CSV subido, eligiendo **rango de
+  fechas y timeframe de barra** (M5/M15/M30/H1/H4/D1); métricas, veredicto,
   curva de equity y tabla de trades. Corre en segundo plano.
 - **Historial** y **Monitor de Actividad**: trades cerrados, curva de equity, log.
 
@@ -52,15 +54,18 @@ cp .env.example .env                   # y completa FXCM_USER / FXCM_PASS
 ```bash
 uv run pytest                                  # tests de la estrategia
 uv run python scripts/check_connection.py      # smoke test de conexión FXCM
-uv run python scripts/run_backtest.py          # backtest con histórico FXCM (~2 años)
-uv run python scripts/run_backtest.py --synthetic   # prueba del pipeline sin cuenta
+uv run python scripts/run_backtest.py          # backtest CLI (--tf, --months, --csv)
 
-# Dashboard + bot (http://localhost:8000)
+# 1) Backend: API + bot (usa MOCK=1 para modo simulado sin credenciales)
 uv run uvicorn tradingbot.web.app:app --port 8000
 
-# Dashboard en modo simulado (sin credenciales, precios random-walk)
-MOCK=1 uv run uvicorn tradingbot.web.app:app --port 8000
+# 2) Frontend Next.js (primera vez: cd web-ui && npm install)
+cd web-ui && npm run dev        # abre http://localhost:3000
 ```
+
+Si el backend corre en otro puerto, exporta antes de `npm run dev`:
+`BACKEND_URL=http://localhost:PUERTO` y `NEXT_PUBLIC_BACKEND_PORT=PUERTO`.
+(El backend también sirve una UI legacy sencilla en su propio puerto.)
 
 Sin credenciales en `.env` el bot arranca automáticamente en modo **SIMULADO**
 (se indica en el dashboard). Con credenciales usa la conexión de `FXCM_CONNECTION`

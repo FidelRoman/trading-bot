@@ -74,7 +74,8 @@ class MockBroker:
                 "time": datetime.now(timezone.utc).isoformat(),
             }
 
-    _TF_FREQ = {"m1": "1min", "m5": "5min", "m15": "15min", "m30": "30min", "h1": "1h", "h4": "4h"}
+    _TF_FREQ = {"m1": "1min", "m5": "5min", "m15": "15min", "m30": "30min",
+                "h1": "1h", "h4": "4h", "d1": "1D"}
 
     def get_candles(self, count: int = 300, date_from=None, date_to=None, timeframe="m15") -> pd.DataFrame:
         freq = self._TF_FREQ.get(timeframe, "15min")

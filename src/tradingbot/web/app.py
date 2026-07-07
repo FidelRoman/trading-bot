@@ -120,6 +120,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="EUR/USD Bollinger Bot", lifespan=lifespan)
 
+# El frontend Next.js corre en otro puerto en desarrollo (localhost únicamente)
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.get("/")
 async def index():
@@ -249,18 +259,49 @@ async def backtest_state():
     return app.state.backtest.state()
 
 
+BACKTEST_TF = {"m5", "m15", "m30", "h1", "h4", "d1"}
+
+
 @app.post("/api/backtest")
 async def backtest_start(payload: dict = Body(...)):
+    from datetime import datetime, timedelta, timezone
+
     job: BacktestJob = app.state.backtest
     source = str(payload.get("source", "synthetic"))
-    months = max(1, min(int(payload.get("months", 24)), 60))
+    timeframe = str(payload.get("timeframe", "m15")).lower()
+    if timeframe not in BACKTEST_TF:
+        return {"ok": False, "error": f"Timeframe inválido: {timeframe}"}
     equity = max(100.0, float(payload.get("equity", 10_000)))
     spread = max(0.0, min(float(payload.get("spread_pips", 1.2)), 10.0))
+
+    now = datetime.now(timezone.utc)
+    try:
+        raw_from = payload.get("date_from")
+        raw_to = payload.get("date_to")
+        date_from = (
+            datetime.fromisoformat(raw_from).replace(tzinfo=timezone.utc)
+            if raw_from
+            else now - timedelta(days=730)
+        )
+        date_to = (
+            datetime.fromisoformat(raw_to).replace(tzinfo=timezone.utc)
+            + timedelta(hours=23, minutes=59)
+            if raw_to
+            else now
+        )
+    except ValueError:
+        return {"ok": False, "error": "Fechas inválidas (formato AAAA-MM-DD)"}
+    date_to = min(date_to, now)
+    if date_from >= date_to:
+        return {"ok": False, "error": "La fecha inicial debe ser anterior a la final"}
+    if (date_to - date_from).days > 365 * 5:
+        return {"ok": False, "error": "Rango máximo: 5 años"}
+
     if not job.start_allowed():
         return {"ok": False, "error": "Ya hay un backtest en ejecución"}
 
     async def _runner():
-        await asyncio.to_thread(job.run_sync, source, months, equity, spread)
+        await asyncio.to_thread(job.run_sync, source, timeframe, date_from, date_to, equity, spread)
         await app.state.hub.broadcast({"type": "backtest"})
 
     asyncio.create_task(_runner())
