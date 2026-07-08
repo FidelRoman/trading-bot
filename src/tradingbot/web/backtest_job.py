@@ -73,6 +73,7 @@ class BacktestJob:
         equity: float,
         spread_pips: float,
         strategy: str | None = None,
+        strategy_params: dict | None = None,
     ) -> None:
         """Corre en un thread (asyncio.to_thread). start_allowed() debe ser True."""
         started = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -83,6 +84,17 @@ class BacktestJob:
             sp, rp = self.engine.strategy_params(), self.engine.risk_params()
             if strategy:
                 sp = replace(sp, active_strategy=strategy)
+            if strategy_params:
+                updates = {}
+                for k, v in strategy_params.items():
+                    if hasattr(sp, k) and v is not None:
+                        expected_type = type(getattr(sp, k))
+                        try:
+                            updates[k] = expected_type(v)
+                        except (ValueError, TypeError):
+                            pass
+                if updates:
+                    sp = replace(sp, **updates)
             self._set_note(f"Simulando {len(df)} velas…")
             result = run_backtest(
                 df, strategy_params=sp, risk=rp, initial_equity=equity, spread_pips=spread_pips

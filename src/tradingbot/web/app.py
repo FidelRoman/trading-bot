@@ -434,11 +434,13 @@ async def backtest_start(payload: dict = Body(...)):
     if strategy and strategy not in ("bollinger", "rsi", "wyckoff_1"):
         return {"ok": False, "error": f"Estrategia inválida: {strategy}"}
 
+    strategy_params = payload.get("strategy_params")
+
     if not job.start_allowed():
         return {"ok": False, "error": "Ya hay un backtest en ejecución"}
 
     async def _runner():
-        await asyncio.to_thread(job.run_sync, source, timeframe, date_from, date_to, equity, spread, strategy)
+        await asyncio.to_thread(job.run_sync, source, timeframe, date_from, date_to, equity, spread, strategy, strategy_params)
         await app.state.hub.broadcast({"type": "backtest"})
 
     asyncio.create_task(_runner())

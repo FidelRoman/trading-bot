@@ -8,3 +8,7 @@ data/*.sqlite*
 data/history/
 *.log
 .DS_Store
+
+# Local history
+.history/
+History/
