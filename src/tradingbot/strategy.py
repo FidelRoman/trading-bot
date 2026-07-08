@@ -180,7 +180,7 @@ def size_position(equity: float, risk_frac: float, stop_distance: float, min_lot
     ``units * stop_distance`` USD. Redondea hacia abajo a múltiplos de
     ``min_lot``; devuelve 0 si el riesgo no alcanza ni para un micro-lote.
     """
-    if math.isnan(stop_distance) or stop_distance <= 0 or equity <= 0:
+    if math.isnan(stop_distance) or math.isnan(risk_frac) or stop_distance <= 0 or equity <= 0 or risk_frac <= 0:
         return 0
     units = (equity * risk_frac) / stop_distance
     return int(units // min_lot) * min_lot

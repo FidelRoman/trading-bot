@@ -71,6 +71,7 @@ def run_backtest(
     risk: RiskParams = RiskParams(),
     initial_equity: float = 10_000.0,
     spread_pips: float = 1.2,
+    fixed_units: int = 0,
 ) -> BacktestResult:
     d = add_indicators(df, strategy_params)
     signals = compute_signals(d, strategy_params)
@@ -165,7 +166,10 @@ def run_backtest(
                         tp = d["bb_mid"].iloc[i - 1]
                 if pd.isna(tp):
                     continue
-                units = size_position(equity, risk.risk_per_trade, stop_distance, risk.min_lot)
+                if fixed_units > 0:
+                    units = fixed_units
+                else:
+                    units = size_position(equity, risk.risk_per_trade, stop_distance, risk.min_lot)
                 # TP debe quedar del lado correcto tras el gap de apertura
                 tp_valid = tp > entry if side == LONG else tp < entry
                 if units > 0 and tp_valid:

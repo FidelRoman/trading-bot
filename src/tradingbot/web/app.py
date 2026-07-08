@@ -397,6 +397,7 @@ BACKTEST_TF = {"m5", "m15", "m30", "h1", "h4", "d1"}
 
 @app.post("/api/backtest")
 async def backtest_start(payload: dict = Body(...)):
+    print(f"DEBUG BACKTEST PAYLOAD: {payload}")
     from datetime import datetime, timedelta, timezone
 
     job: BacktestJob = app.state.backtest
@@ -435,12 +436,41 @@ async def backtest_start(payload: dict = Body(...)):
         return {"ok": False, "error": f"Estrategia inválida: {strategy}"}
 
     strategy_params = payload.get("strategy_params")
+    risk_per_trade = payload.get("risk_per_trade")
+    if risk_per_trade is not None:
+        try:
+            risk_per_trade = float(risk_per_trade)
+            import math
+            if math.isnan(risk_per_trade) or math.isinf(risk_per_trade) or risk_per_trade <= 0:
+                risk_per_trade = None
+        except (ValueError, TypeError):
+            risk_per_trade = None
+    fixed_units = payload.get("fixed_units")
+    if fixed_units is not None:
+        try:
+            fixed_units = int(fixed_units)
+            if fixed_units < 0:
+                fixed_units = 0
+        except (ValueError, TypeError):
+            fixed_units = 0
 
     if not job.start_allowed():
         return {"ok": False, "error": "Ya hay un backtest en ejecución"}
 
     async def _runner():
-        await asyncio.to_thread(job.run_sync, source, timeframe, date_from, date_to, equity, spread, strategy, strategy_params)
+        await asyncio.to_thread(
+            job.run_sync,
+            source,
+            timeframe,
+            date_from,
+            date_to,
+            equity,
+            spread,
+            strategy,
+            strategy_params,
+            risk_per_trade,
+            fixed_units,
+        )
         await app.state.hub.broadcast({"type": "backtest"})
 
     asyncio.create_task(_runner())

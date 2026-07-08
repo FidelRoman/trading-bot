@@ -74,6 +74,8 @@ class BacktestJob:
         spread_pips: float,
         strategy: str | None = None,
         strategy_params: dict | None = None,
+        risk_per_trade: float | None = None,
+        fixed_units: int | None = None,
     ) -> None:
         """Corre en un thread (asyncio.to_thread). start_allowed() debe ser True."""
         started = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -95,9 +97,14 @@ class BacktestJob:
                             pass
                 if updates:
                     sp = replace(sp, **updates)
+            if risk_per_trade is not None:
+                rp = replace(rp, risk_per_trade=risk_per_trade)
+            if fixed_units is None:
+                fixed_units = int(self.engine._overrides().get("fixed_units", 0))
+
             self._set_note(f"Simulando {len(df)} velas…")
             result = run_backtest(
-                df, strategy_params=sp, risk=rp, initial_equity=equity, spread_pips=spread_pips
+                df, strategy_params=sp, risk=rp, initial_equity=equity, spread_pips=spread_pips, fixed_units=fixed_units
             )
             eq = result.equity_curve
             seen: set[int] = set()

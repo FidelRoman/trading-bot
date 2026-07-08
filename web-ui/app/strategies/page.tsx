@@ -27,6 +27,8 @@ interface BacktestInputs {
   equity: number;
   spread: number;
   file: File | null;
+  riskPerTrade: number;
+  fixedUnits: number;
 }
 
 export default function StrategiesPage() {
@@ -40,9 +42,9 @@ export default function StrategiesPage() {
 
   // Estados independientes de Backtesting por estrategia
   const [btSettings, setBtSettings] = useState<Record<string, BacktestInputs>>({
-    bollinger: { source: "synthetic", timeframe: "m15", dateFrom: isoDay(new Date(Date.now() - 730 * 86400_000)), dateTo: isoDay(new Date()), equity: 10000, spread: 1.2, file: null },
-    rsi: { source: "synthetic", timeframe: "m15", dateFrom: isoDay(new Date(Date.now() - 730 * 86400_000)), dateTo: isoDay(new Date()), equity: 10000, spread: 1.2, file: null },
-    wyckoff_1: { source: "synthetic", timeframe: "m15", dateFrom: isoDay(new Date(Date.now() - 730 * 86400_000)), dateTo: isoDay(new Date()), equity: 10000, spread: 1.2, file: null },
+    bollinger: { source: "synthetic", timeframe: "m15", dateFrom: isoDay(new Date(Date.now() - 730 * 86400_000)), dateTo: isoDay(new Date()), equity: 10000, spread: 1.2, file: null, riskPerTrade: 0.5, fixedUnits: 0 },
+    rsi: { source: "synthetic", timeframe: "m15", dateFrom: isoDay(new Date(Date.now() - 730 * 86400_000)), dateTo: isoDay(new Date()), equity: 10000, spread: 1.2, file: null, riskPerTrade: 0.5, fixedUnits: 0 },
+    wyckoff_1: { source: "synthetic", timeframe: "m15", dateFrom: isoDay(new Date(Date.now() - 730 * 86400_000)), dateTo: isoDay(new Date()), equity: 10000, spread: 1.2, file: null, riskPerTrade: 0.5, fixedUnits: 0 },
   });
   const [btResults, setBtResults] = useState<Record<string, BacktestState>>({});
   const [btMsgs, setBtMsgs] = useState<Record<string, { text: string; cls: string } | null>>({});
@@ -71,6 +73,14 @@ export default function StrategiesPage() {
       if (s.active_strategy) {
         setExpanded(s.active_strategy);
       }
+
+      const initialRisk = s.risk_per_trade ? +(s.risk_per_trade * 100).toFixed(2) : 0.5;
+      const initialFixed = s.fixed_units ?? 0;
+      setBtSettings({
+        bollinger: { source: "synthetic", timeframe: "m15", dateFrom: isoDay(new Date(Date.now() - 730 * 86400_000)), dateTo: isoDay(new Date()), equity: 10000, spread: 1.2, file: null, riskPerTrade: initialRisk, fixedUnits: initialFixed },
+        rsi: { source: "synthetic", timeframe: "m15", dateFrom: isoDay(new Date(Date.now() - 730 * 86400_000)), dateTo: isoDay(new Date()), equity: 10000, spread: 1.2, file: null, riskPerTrade: initialRisk, fixedUnits: initialFixed },
+        wyckoff_1: { source: "synthetic", timeframe: "m15", dateFrom: isoDay(new Date(Date.now() - 730 * 86400_000)), dateTo: isoDay(new Date()), equity: 10000, spread: 1.2, file: null, riskPerTrade: initialRisk, fixedUnits: initialFixed },
+      });
     }).catch(() => {});
 
     // Recuperar la última simulación realizada
@@ -220,6 +230,8 @@ export default function StrategiesPage() {
         spread_pips: s.spread,
         strategy: stratKey,
         strategy_params: values,
+        risk_per_trade: s.riskPerTrade && !isNaN(s.riskPerTrade) ? s.riskPerTrade / 100 : undefined,
+        fixed_units: s.fixedUnits && !isNaN(s.fixedUnits) ? s.fixedUnits : 0,
       });
 
       if (!r.ok) {
@@ -291,6 +303,28 @@ export default function StrategiesPage() {
           <label>
             SPREAD (PIPS)
             <input type="number" min={0} max={10} step={0.1} value={s.spread} onChange={(e) => setSetting("spread", +e.target.value)} />
+          </label>
+          <label>
+            RIESGO POR OPERACIÓN (%)
+            <input 
+              type="number" 
+              min={0.1} 
+              max={10} 
+              step={0.1} 
+              value={s.riskPerTrade} 
+              onChange={(e) => setSetting("riskPerTrade", +e.target.value)} 
+              disabled={s.fixedUnits > 0}
+            />
+          </label>
+          <label>
+            UNIDADES FIJAS (0 = AUTO)
+            <input 
+              type="number" 
+              min={0} 
+              step={1000} 
+              value={s.fixedUnits} 
+              onChange={(e) => setSetting("fixedUnits", +e.target.value)} 
+            />
           </label>
           {s.source === "csv" && (
             <label style={{ gridColumn: "span 2" }}>
