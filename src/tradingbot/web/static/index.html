@@ -23,11 +23,10 @@
       </div>
     </div>
 
-    <button class="btn-new" data-goto="settings">＋&nbsp; AJUSTAR ESTRATEGIA</button>
-
     <nav class="nav">
       <a class="nav-item active" data-view="dashboard"><span class="ico">▦</span> Dashboard</a>
-      <a class="nav-item" data-view="settings"><span class="ico">⚙</span> Ajustes del Bot</a>
+      <a class="nav-item" data-view="strategies"><span class="ico">⚙</span> Estrategias</a>
+      <a class="nav-item" data-view="settings"><span class="ico">🔧</span> Ajustes</a>
       <a class="nav-item" data-view="backtest"><span class="ico">≋</span> Backtesting</a>
       <a class="nav-item" data-view="history"><span class="ico">⟲</span> Historial</a>
       <a class="nav-item" data-view="activity"><span class="ico">∿</span> Monitor de Actividad</a>
@@ -166,17 +165,52 @@
       </div>
     </section>
 
-    <!-- ============ AJUSTES ============ -->
-    <section class="view" id="view-settings">
+    <!-- ============ ESTRATEGIAS ============ -->
+    <section class="view" id="view-strategies">
       <div class="card narrow">
-        <div class="card-head"><div class="card-title">⚙ BOT SETTINGS — ESTRATEGIA</div></div>
+        <div class="card-head"><div class="card-title">📈 CONFIGURACIÓN DE ESTRATEGIAS</div></div>
+        
+        <div style="margin-top: 14px; margin-bottom: 20px;">
+          <label style="display: flex; flex-direction: column; gap: 7px; font-size: 9.5px; letter-spacing: 1.6px; color: var(--dim);">
+            ESTRATEGIA ACTIVA
+            <select id="s-active_strategy" style="background: var(--card2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 14px; font-weight: 600; padding: 11px 12px; outline: none; margin-top: 5px;">
+              <option value="bollinger">Reversión a la Media (Bandas de Bollinger)</option>
+              <option value="rsi">Estrategia RSI (Relative Strength Index)</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="card-head"><div class="card-title">⚙ PARÁMETROS BOLLINGER</div></div>
         <div class="form-grid">
           <label>PERÍODO BOLLINGER<input id="s-bb_period" type="number" min="10" max="50" step="1"></label>
           <label>DESVIACIÓN STD<input id="s-bb_std" type="number" min="1" max="3" step="0.1"></label>
+          <label>ANCHO MÍN. BANDAS (PIPS)<input id="s-min_band_width_pips" type="number" min="0" max="50" step="1"></label>
+        </div>
+
+        <div class="card-head mt"><div class="card-title">⚙ PARÁMETROS RSI</div></div>
+        <div class="form-grid">
+          <label>PERÍODO RSI<input id="s-rsi_period" type="number" min="5" max="50" step="1"></label>
+          <label>LÍMITE SOBRECOMPRA<input id="s-rsi_overbought" type="number" min="50" max="90" step="1"></label>
+          <label>LÍMITE SOBREVENTA<input id="s-rsi_oversold" type="number" min="10" max="50" step="1"></label>
+        </div>
+
+        <div class="card-head mt"><div class="card-title">⚙ PARÁMETROS COMUNES (ATR)</div></div>
+        <div class="form-grid">
           <label>PERÍODO ATR<input id="s-atr_period" type="number" min="5" max="50" step="1"></label>
           <label>MULT. STOP (×ATR)<input id="s-sl_atr_mult" type="number" min="0.5" max="5" step="0.1"></label>
         </div>
-        <div class="card-head mt"><div class="card-title">▲ BOT SETTINGS — RIESGO</div></div>
+
+        <div class="form-actions">
+          <button class="btn btn-start" id="btn-save-strategies">GUARDAR ESTRATEGIA</button>
+          <span class="hint" id="strategies-msg">Los cambios aplican desde la próxima vela.</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ AJUSTES ============ -->
+    <section class="view" id="view-settings">
+      <div class="card narrow">
+        <div class="card-head"><div class="card-title">▲ BOT SETTINGS — RIESGO</div></div>
         <div class="form-grid">
           <label>RIESGO POR TRADE (%)<input id="s-risk_per_trade" type="number" min="0.1" max="2" step="0.1"></label>
           <label>LÍMITE PÉRDIDA DIARIA (%)<input id="s-daily_loss_limit" type="number" min="1" max="10" step="0.5"></label>
@@ -186,7 +220,7 @@
         </div>
         <div class="form-actions">
           <button class="btn btn-start" id="btn-save-settings">GUARDAR AJUSTES</button>
-          <span class="hint" id="settings-msg">Los cambios aplican desde la próxima vela.</span>
+          <span class="hint" id="settings-msg">Los cambios aplican de inmediato.</span>
         </div>
       </div>
     </section>

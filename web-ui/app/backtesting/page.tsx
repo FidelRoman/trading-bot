@@ -25,6 +25,7 @@ export default function Backtesting() {
   const { status, backtestVersion } = useLive();
   const simulated = status?.mode === "simulado";
 
+  const [strategy, setStrategy] = useState("bollinger");
   const [source, setSource] = useState("synthetic");
   const [timeframe, setTimeframe] = useState("m15");
   const [dateFrom, setDateFrom] = useState(() =>
@@ -83,6 +84,7 @@ export default function Backtesting() {
       date_to: dateTo,
       equity,
       spread_pips: spread,
+      strategy,
     });
     if (!r.ok) { setMsg({ text: "Error: " + r.error, cls: "err" }); return; }
     setSt({ status: "running" });
@@ -103,12 +105,23 @@ export default function Backtesting() {
           <div className="card-title">≋ BACKTESTING — SIMULAR LA ESTRATEGIA SOBRE HISTÓRICO</div>
           {st.params && (
             <span className="chip">
-              BB({st.params.bb_period},{st.params.bb_std}) · SL {st.params.sl_atr_mult}×ATR(
+              {st.params.active_strategy === "rsi" ? (
+                `RSI(${st.params.rsi_period})`
+              ) : (
+                `BB(${st.params.bb_period},${st.params.bb_std})`
+              )} · SL {st.params.sl_atr_mult}×ATR(
               {st.params.atr_period}) · riesgo {(st.params.risk_per_trade * 100).toFixed(1)}%
             </span>
           )}
         </div>
         <div className="bt-form">
+          <label className="bt-field">
+            ESTRATEGIA
+            <select value={strategy} onChange={(e) => setStrategy(e.target.value)}>
+              <option value="bollinger">Reversión Bollinger</option>
+              <option value="rsi">Estrategia RSI</option>
+            </select>
+          </label>
           <label className="bt-field">
             FUENTE DE DATOS
             <select value={source} onChange={(e) => setSource(e.target.value)}>
@@ -157,9 +170,6 @@ export default function Backtesting() {
           </button>
         </div>
         <div className={`manual-msg ${msg?.cls ?? ""}`}>{msg?.text ?? ""}</div>
-        <div className="hint" style={{ marginTop: 6 }}>
-          El bot en vivo opera siempre en M15; otros timeframes son para investigar la estrategia.
-        </div>
       </div>
 
       {done && s && (

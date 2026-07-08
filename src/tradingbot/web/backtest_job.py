@@ -72,12 +72,17 @@ class BacktestJob:
         date_to: datetime,
         equity: float,
         spread_pips: float,
+        strategy: str | None = None,
     ) -> None:
         """Corre en un thread (asyncio.to_thread). start_allowed() debe ser True."""
         started = datetime.now(timezone.utc).isoformat(timespec="seconds")
         try:
+            from dataclasses import replace
+
             df, source_label = self._load_data(source, timeframe, date_from, date_to)
             sp, rp = self.engine.strategy_params(), self.engine.risk_params()
+            if strategy:
+                sp = replace(sp, active_strategy=strategy)
             self._set_note(f"Simulando {len(df)} velas…")
             result = run_backtest(
                 df, strategy_params=sp, risk=rp, initial_equity=equity, spread_pips=spread_pips
@@ -115,8 +120,12 @@ class BacktestJob:
                     "to": df.index[-1].isoformat(),
                 },
                 "params": {
+                    "active_strategy": sp.active_strategy,
                     "bb_period": sp.bb_period,
                     "bb_std": sp.bb_std,
+                    "rsi_period": sp.rsi_period,
+                    "rsi_overbought": sp.rsi_overbought,
+                    "rsi_oversold": sp.rsi_oversold,
                     "atr_period": sp.atr_period,
                     "sl_atr_mult": sp.sl_atr_mult,
                     "risk_per_trade": rp.risk_per_trade,

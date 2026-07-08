@@ -16,13 +16,18 @@ from .config import PIP, RiskParams, Settings, StrategyParams
 from .store import Store
 from .strategy import entry_allowed, latest_signal, size_position, spread_ok
 
-# Rangos permitidos para ajustes desde la interfaz: clave -> (min, max, tipo)
+# Rangos permitidos para ajustes desde la interfaz: clave -> (min, max, tipo) o (opciones, tipo)
 SETTING_BOUNDS = {
+    "active_strategy": (["bollinger", "rsi"], str),
+    "timeframe": (["m5", "m15", "m30", "h1", "h4"], str),
     "bb_period": (10, 50, int),
     "bb_std": (1.0, 3.0, float),
     "atr_period": (5, 50, int),
     "sl_atr_mult": (0.5, 5.0, float),
     "min_band_width_pips": (0.0, 50.0, float),
+    "rsi_period": (5, 50, int),
+    "rsi_overbought": (50.0, 90.0, float),
+    "rsi_oversold": (10.0, 50.0, float),
     "risk_per_trade": (0.001, 0.02, float),
     "daily_loss_limit": (0.01, 0.10, float),
     "max_trades_per_day": (1, 20, int),
@@ -32,16 +37,24 @@ SETTING_BOUNDS = {
 
 log = logging.getLogger(__name__)
 
-CANDLE_SECONDS = 15 * 60
+TF_SECONDS = {
+    "m5": 5 * 60,
+    "m15": 15 * 60,
+    "m30": 30 * 60,
+    "h1": 60 * 60,
+    "h4": 4 * 60 * 60,
+}
+
 GRACE_SECONDS = 10          # margen tras el cierre de vela antes de pedir histórico
 FAST_TICK_SECONDS = 5       # cadencia de vigilancia de posición/equity
 
 
-def last_closed_boundary(now: datetime) -> datetime:
-    """Apertura de la última vela de 15m ya CERRADA."""
+def last_closed_boundary(now: datetime, timeframe: str = "m15") -> datetime:
+    """Apertura de la última vela ya CERRADA."""
+    seconds = TF_SECONDS.get(timeframe.lower(), 15 * 60)
     epoch = int(now.timestamp())
-    current_open = epoch - (epoch % CANDLE_SECONDS)
-    return datetime.fromtimestamp(current_open - CANDLE_SECONDS, tz=timezone.utc)
+    current_open = epoch - (epoch % seconds)
+    return datetime.fromtimestamp(current_open - seconds, tz=timezone.utc)
 
 
 class BotEngine:
@@ -82,11 +95,16 @@ class BotEngine:
     def strategy_params(self) -> StrategyParams:
         o, b = self._overrides(), self.s.strategy
         return StrategyParams(
+            active_strategy=str(o.get("active_strategy", b.active_strategy)),
+            timeframe=str(o.get("timeframe", b.timeframe)),
             bb_period=int(o.get("bb_period", b.bb_period)),
             bb_std=float(o.get("bb_std", b.bb_std)),
             atr_period=int(o.get("atr_period", b.atr_period)),
             sl_atr_mult=float(o.get("sl_atr_mult", b.sl_atr_mult)),
             min_band_width_pips=float(o.get("min_band_width_pips", b.min_band_width_pips)),
+            rsi_period=int(o.get("rsi_period", b.rsi_period)),
+            rsi_overbought=float(o.get("rsi_overbought", b.rsi_overbought)),
+            rsi_oversold=float(o.get("rsi_oversold", b.rsi_oversold)),
         )
 
     def risk_params(self) -> RiskParams:
@@ -102,11 +120,16 @@ class BotEngine:
     def current_settings(self) -> dict:
         sp, rp = self.strategy_params(), self.risk_params()
         return {
+            "active_strategy": sp.active_strategy,
+            "timeframe": sp.timeframe,
             "bb_period": sp.bb_period,
             "bb_std": sp.bb_std,
             "atr_period": sp.atr_period,
             "sl_atr_mult": sp.sl_atr_mult,
             "min_band_width_pips": sp.min_band_width_pips,
+            "rsi_period": sp.rsi_period,
+            "rsi_overbought": sp.rsi_overbought,
+            "rsi_oversold": sp.rsi_oversold,
             "risk_per_trade": rp.risk_per_trade,
             "daily_loss_limit": rp.daily_loss_limit,
             "max_trades_per_day": rp.max_trades_per_day,
@@ -120,11 +143,21 @@ class BotEngine:
         for key, raw in payload.items():
             if key not in SETTING_BOUNDS:
                 continue
-            lo, hi, cast = SETTING_BOUNDS[key]
-            try:
-                merged[key] = min(max(cast(float(raw)), lo), hi)
-            except (TypeError, ValueError):
-                continue
+            bounds = SETTING_BOUNDS[key]
+            if len(bounds) == 3:
+                lo, hi, cast = bounds
+                try:
+                    merged[key] = min(max(cast(float(raw)), lo), hi)
+                except (TypeError, ValueError):
+                    continue
+            elif len(bounds) == 2:
+                options, cast = bounds
+                try:
+                    val = cast(raw)
+                    if val in options:
+                        merged[key] = val
+                except (TypeError, ValueError):
+                    continue
         self.store.set_state("settings_override", merged)
         self.store.log("info", "Ajustes actualizados desde la interfaz")
         return self.current_settings()
@@ -171,8 +204,11 @@ class BotEngine:
                 await asyncio.to_thread(self._watch_position)
                 self._maybe_snapshot_equity()
                 now = datetime.now(timezone.utc)
-                boundary = last_closed_boundary(now)
-                due = (now - boundary).total_seconds() >= CANDLE_SECONDS + GRACE_SECONDS
+                sp = self.strategy_params()
+                tf = sp.timeframe
+                seconds = TF_SECONDS.get(tf.lower(), 15 * 60)
+                boundary = last_closed_boundary(now, tf)
+                due = (now - boundary).total_seconds() >= seconds + GRACE_SECONDS
                 if due and self._last_processed != boundary:
                     await asyncio.to_thread(self._candle_tick, boundary)
                     self._last_processed = boundary
@@ -254,13 +290,15 @@ class BotEngine:
 
     def _candle_tick(self, boundary: datetime) -> None:
         sp, rp = self.strategy_params(), self.risk_params()
-        candles = self.broker.get_candles(count=250)
+        candles = self.broker.get_candles(count=250, timeframe=sp.timeframe)
         if candles.empty:
             self.store.log("warn", "Sin velas del bróker")
             return
         now = datetime.now(timezone.utc)
-        candles = candles[[ts + timedelta(seconds=CANDLE_SECONDS) <= now for ts in candles.index]]
-        if candles.empty or len(candles) < sp.bb_period + 2:
+        seconds = TF_SECONDS.get(sp.timeframe.lower(), 15 * 60)
+        candles = candles[[ts + timedelta(seconds=seconds) <= now for ts in candles.index]]
+        warmup = max(sp.bb_period, sp.rsi_period) + 2
+        if candles.empty or len(candles) < warmup:
             return
 
         sig = latest_signal(candles, sp)

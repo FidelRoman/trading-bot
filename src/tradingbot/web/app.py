@@ -326,6 +326,27 @@ async def set_credentials(payload: dict = Body(...)):
     os.environ.update(
         {"FXCM_USER": user, "FXCM_PASS": password, "FXCM_CONNECTION": used_connection}
     )
+
+    # Recargar configuración y re-crear store para el nuevo modo si cambió
+    from ..config import load_settings
+    from ..store import Store
+
+    new_settings = load_settings()
+    if str(app.state.store.path) != str(new_settings.db_path):
+        old_store = app.state.store
+        new_store = Store(new_settings.db_path)
+        
+        # Swap store references
+        app.state.store = new_store
+        app.state.engine.store = new_store
+        app.state.backtest.store = new_store
+        
+        # Close old db
+        try:
+            old_store.close()
+        except Exception:
+            pass
+
     old = app.state.broker
     app.state.broker = new_broker
     app.state.engine.broker = new_broker
@@ -401,11 +422,15 @@ async def backtest_start(payload: dict = Body(...)):
     if (date_to - date_from).days > 365 * 5:
         return {"ok": False, "error": "Rango máximo: 5 años"}
 
+    strategy = payload.get("strategy")
+    if strategy and strategy not in ("bollinger", "rsi"):
+        return {"ok": False, "error": f"Estrategia inválida: {strategy}"}
+
     if not job.start_allowed():
         return {"ok": False, "error": "Ya hay un backtest en ejecución"}
 
     async def _runner():
-        await asyncio.to_thread(job.run_sync, source, timeframe, date_from, date_to, equity, spread)
+        await asyncio.to_thread(job.run_sync, source, timeframe, date_from, date_to, equity, spread, strategy)
         await app.state.hub.broadcast({"type": "backtest"})
 
     asyncio.create_task(_runner())

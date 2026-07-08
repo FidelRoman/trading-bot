@@ -144,8 +144,16 @@ def run_backtest(
                 and (equity - day_start_equity) / day_start_equity > -risk.daily_loss_limit
             ):
                 entry = opens[i]
-                stop_distance = strategy_params.sl_atr_mult * d["atr"].iloc[i - 1]
-                tp = d["bb_mid"].iloc[i - 1]
+                atr_val = d["atr"].iloc[i - 1]
+                if pd.isna(atr_val) or atr_val <= 0:
+                    continue
+                stop_distance = strategy_params.sl_atr_mult * atr_val
+                if strategy_params.active_strategy == "rsi":
+                    tp = entry + 1.5 * stop_distance if side == LONG else entry - 1.5 * stop_distance
+                else:
+                    tp = d["bb_mid"].iloc[i - 1]
+                if pd.isna(tp):
+                    continue
                 units = size_position(equity, risk.risk_per_trade, stop_distance, risk.min_lot)
                 # TP debe quedar del lado correcto tras el gap de apertura
                 tp_valid = tp > entry if side == LONG else tp < entry

@@ -48,12 +48,17 @@ def _now() -> str:
 
 class Store:
     def __init__(self, path: Path | str):
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         self._db = sqlite3.connect(str(path), check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._lock = threading.Lock()
         with self._lock, self._db:
             self._db.executescript(_SCHEMA)
+
+    def close(self) -> None:
+        with self._lock:
+            self._db.close()
 
     # -- estado ---------------------------------------------------------
 

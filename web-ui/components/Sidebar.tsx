@@ -6,7 +6,8 @@ import { useLive } from "@/lib/live";
 
 const NAV = [
   { href: "/", ico: "▦", label: "Dashboard" },
-  { href: "/settings", ico: "⚙", label: "Ajustes del Bot" },
+  { href: "/strategies", ico: "⚙", label: "Estrategias" },
+  { href: "/settings", ico: "🔧", label: "Ajustes" },
   { href: "/backtesting", ico: "≋", label: "Backtesting" },
   { href: "/history", ico: "⟲", label: "Historial" },
   { href: "/activity", ico: "∿", label: "Monitor de Actividad" },
@@ -30,8 +31,6 @@ export default function Sidebar() {
           </div>
         </div>
       </div>
-
-      <Link href="/settings" className="btn-new">＋&nbsp; AJUSTAR ESTRATEGIA</Link>
 
       <nav className="nav">
         {NAV.map((n) => (

@@ -85,11 +85,16 @@ export interface LogLine {
 }
 
 export interface BotSettings {
+  active_strategy: string;
+  timeframe: string;
   bb_period: number;
   bb_std: number;
   atr_period: number;
   sl_atr_mult: number;
   min_band_width_pips: number;
+  rsi_period: number;
+  rsi_overbought: number;
+  rsi_oversold: number;
   risk_per_trade: number;
   daily_loss_limit: number;
   max_trades_per_day: number;
@@ -118,8 +123,12 @@ export interface BacktestState {
   candles?: number;
   period?: { from: string; to: string };
   params?: {
-    bb_period: number;
-    bb_std: number;
+    active_strategy?: string;
+    bb_period?: number;
+    bb_std?: number;
+    rsi_period?: number;
+    rsi_overbought?: number;
+    rsi_oversold?: number;
     atr_period: number;
     sl_atr_mult: number;
     risk_per_trade: number;

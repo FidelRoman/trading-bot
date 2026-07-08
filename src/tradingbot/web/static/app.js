@@ -126,16 +126,23 @@ async function refreshLogs() {
 
 async function refreshSettings() {
   const s = await getJSON("/api/settings");
-  $("s-bb_period").value = s.bb_period;
-  $("s-bb_std").value = s.bb_std;
-  $("s-atr_period").value = s.atr_period;
-  $("s-sl_atr_mult").value = s.sl_atr_mult;
-  $("s-risk_per_trade").value = +(s.risk_per_trade * 100).toFixed(2);
-  $("s-daily_loss_limit").value = +(s.daily_loss_limit * 100).toFixed(1);
-  $("s-max_trades_per_day").value = s.max_trades_per_day;
-  $("s-max_spread_pips").value = s.max_spread_pips;
-  $("s-fixed_units").value = s.fixed_units;
-  $("ctl-bb").textContent = `${s.bb_period},${s.bb_std}`;
+  if ($("s-active_strategy")) $("s-active_strategy").value = s.active_strategy || "bollinger";
+  if ($("s-bb_period")) $("s-bb_period").value = s.bb_period;
+  if ($("s-bb_std")) $("s-bb_std").value = s.bb_std;
+  if ($("s-min_band_width_pips")) $("s-min_band_width_pips").value = s.min_band_width_pips || 0;
+  if ($("s-rsi_period")) $("s-rsi_period").value = s.rsi_period || 14;
+  if ($("s-rsi_overbought")) $("s-rsi_overbought").value = s.rsi_overbought || 70;
+  if ($("s-rsi_oversold")) $("s-rsi_oversold").value = s.rsi_oversold || 30;
+  if ($("s-atr_period")) $("s-atr_period").value = s.atr_period;
+  if ($("s-sl_atr_mult")) $("s-sl_atr_mult").value = s.sl_atr_mult;
+  
+  if ($("s-risk_per_trade")) $("s-risk_per_trade").value = +(s.risk_per_trade * 100).toFixed(2);
+  if ($("s-daily_loss_limit")) $("s-daily_loss_limit").value = +(s.daily_loss_limit * 100).toFixed(1);
+  if ($("s-max_trades_per_day")) $("s-max_trades_per_day").value = s.max_trades_per_day;
+  if ($("s-max_spread_pips")) $("s-max_spread_pips").value = s.max_spread_pips;
+  if ($("s-fixed_units")) $("s-fixed_units").value = s.fixed_units;
+  
+  $("ctl-bb").textContent = s.active_strategy === "rsi" ? `RSI(${s.rsi_period})` : `${s.bb_period},${s.bb_std}`;
 }
 
 /* ================= render ================= */
@@ -252,7 +259,7 @@ function switchView(name) {
   document.querySelectorAll(".nav-item").forEach((n) => n.classList.toggle("active", n.dataset.view === name));
   if (name === "activity") { ensureEquityChart(); refreshLogs(); }
   if (name === "history") refreshTrades();
-  if (name === "settings") refreshSettings();
+  if (name === "settings" || name === "strategies") refreshSettings();
   if (name === "backtest") refreshBacktest();
 }
 document.querySelectorAll(".nav-item").forEach((n) => n.addEventListener("click", () => switchView(n.dataset.view)));
@@ -329,10 +336,6 @@ $("positions-list").addEventListener("click", async (e) => {
 
 $("btn-save-settings").addEventListener("click", async () => {
   const payload = {
-    bb_period: +$("s-bb_period").value,
-    bb_std: +$("s-bb_std").value,
-    atr_period: +$("s-atr_period").value,
-    sl_atr_mult: +$("s-sl_atr_mult").value,
     risk_per_trade: +$("s-risk_per_trade").value / 100,
     daily_loss_limit: +$("s-daily_loss_limit").value / 100,
     max_trades_per_day: +$("s-max_trades_per_day").value,
@@ -341,6 +344,31 @@ $("btn-save-settings").addEventListener("click", async () => {
   };
   const r = await postJSON("/api/settings", payload);
   const msg = $("settings-msg");
+  if (r.ok) {
+    msg.textContent = "✓ Guardado — aplica de inmediato.";
+    msg.className = "hint ok";
+    await refreshSettings();
+  } else {
+    msg.textContent = "Error al guardar";
+    msg.className = "hint";
+  }
+  setTimeout(() => { msg.textContent = "Los cambios aplican de inmediato."; msg.className = "hint"; }, 5000);
+});
+
+$("btn-save-strategies").addEventListener("click", async () => {
+  const payload = {
+    active_strategy: $("s-active_strategy").value,
+    bb_period: +$("s-bb_period").value,
+    bb_std: +$("s-bb_std").value,
+    min_band_width_pips: +$("s-min_band_width_pips").value,
+    rsi_period: +$("s-rsi_period").value,
+    rsi_overbought: +$("s-rsi_overbought").value,
+    rsi_oversold: +$("s-rsi_oversold").value,
+    atr_period: +$("s-atr_period").value,
+    sl_atr_mult: +$("s-sl_atr_mult").value,
+  };
+  const r = await postJSON("/api/settings", payload);
+  const msg = $("strategies-msg");
   if (r.ok) {
     msg.textContent = "✓ Guardado — aplica desde la próxima vela.";
     msg.className = "hint ok";

@@ -17,6 +17,8 @@ PIP = 0.0001
 
 @dataclass(frozen=True)
 class StrategyParams:
+    active_strategy: str = "bollinger"
+    timeframe: str = "m15"
     bb_period: int = 20
     bb_std: float = 2.0
     atr_period: int = 14
@@ -24,6 +26,10 @@ class StrategyParams:
     # No entrar si (banda sup - banda inf) < este mínimo en pips: con bandas
     # apretadas el TP en la banda media no cubre ni el spread. 0 = sin filtro.
     min_band_width_pips: float = 0.0
+    # RSI Strategy:
+    rsi_period: int = 14
+    rsi_overbought: float = 70.0
+    rsi_oversold: float = 30.0
 
 
 @dataclass(frozen=True)
@@ -53,7 +59,11 @@ class FxcmCredentials:
 def _db_path() -> Path:
     """DB separada por modo: los datos simulados no deben mezclarse con los
     de la cuenta FXCM (contaminan equity diario, historial y métricas)."""
-    name = "tradingbot-sim.db" if os.getenv("MOCK") == "1" else "tradingbot.db"
+    if os.getenv("MOCK") == "1":
+        name = "tradingbot-sim.db"
+    else:
+        conn = os.getenv("FXCM_CONNECTION", "Demo").lower()
+        name = f"tradingbot-{conn}.db"
     return PROJECT_ROOT / "data" / name
 
 
