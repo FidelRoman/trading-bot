@@ -7,7 +7,7 @@ import { CandleChart } from "@/components/charts";
 import LogsPanel from "@/components/LogsPanel";
 import PositionsPanel from "@/components/PositionsPanel";
 import StrategyControls from "@/components/StrategyControls";
-import { getJSON } from "@/lib/api";
+import { getJSON, postJSON } from "@/lib/api";
 import { fmt, fmtPx, sign } from "@/lib/format";
 import { useLive } from "@/lib/live";
 import type { Band, Candle, Trade } from "@/lib/types";
@@ -15,12 +15,18 @@ import type { Band, Candle, Trade } from "@/lib/types";
 const TFS = ["m5", "m15", "h1", "h4"] as const;
 
 export default function Dashboard() {
-  const { prices, floatingPl, candleVersion, wsConnected } = useLive();
+  const { status, prices, floatingPl, candleVersion, wsConnected } = useLive();
   const [tf, setTf] = useState<string>("m15");
   const [candles, setCandles] = useState<Candle[]>([]);
   const [bands, setBands] = useState<Band[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [panelMsg, setPanelMsg] = useState("");
+
+  const activeStrategy = status?.active_strategy || "bollinger";
+
+  async function handleStrategyChange(strategyKey: string) {
+    await postJSON("/api/settings", { active_strategy: strategyKey });
+  }
 
   useEffect(() => {
     let alive = true;
@@ -31,7 +37,7 @@ export default function Dashboard() {
       .then((t) => alive && setTrades(t))
       .catch(() => {});
     return () => { alive = false; };
-  }, [tf, candleVersion]);
+  }, [tf, candleVersion, activeStrategy]);
 
   const markers = useMemo<SeriesMarker<Time>[]>(() => {
     if (tf !== "m15") return [];
@@ -86,6 +92,32 @@ export default function Dashboard() {
         <StrategyControls />
       </div>
       <div className="col-side">
+        <div className="card" style={{ marginBottom: "16px", padding: "16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: "12px", fontWeight: "bold", color: "var(--text-muted)", letterSpacing: "1px" }}>
+              ESTRATEGIA ACTIVA
+            </span>
+            <select
+              value={activeStrategy}
+              onChange={(e) => handleStrategyChange(e.target.value)}
+              style={{
+                background: "var(--card2)",
+                border: "1px solid var(--border)",
+                borderRadius: "6px",
+                color: "var(--text)",
+                fontSize: "13px",
+                fontWeight: "600",
+                padding: "6px 12px",
+                outline: "none",
+                cursor: "pointer",
+              }}
+            >
+              <option value="bollinger">Reversión Bollinger</option>
+              <option value="rsi">Estrategia RSI</option>
+              <option value="wyckoff_1">Método Wyckoff 1</option>
+            </select>
+          </div>
+        </div>
         <PositionsPanel onAction={(m) => setPanelMsg(m)} />
         <div className="card">
           <div className="card-head">

@@ -31,6 +31,7 @@ export interface Status {
   halted_today: boolean;
   connected: boolean;
   mode: string;
+  active_strategy: string;
   account: {
     account_id?: string;
     balance?: number;

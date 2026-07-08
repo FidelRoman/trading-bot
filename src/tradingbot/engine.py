@@ -387,6 +387,7 @@ class BotEngine:
             "halted_today": self._halted_today(),
             "connected": connected,
             "mode": getattr(self.broker, "mode", "fxcm"),
+            "active_strategy": self.strategy_params().active_strategy,
             "account": info,
             "daily_pl_pct": daily_pl_pct,
             "daily_pl_abs": daily_pl_abs,
