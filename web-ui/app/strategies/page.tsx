@@ -24,6 +24,9 @@ export default function StrategiesPage() {
         rsi_period: s.rsi_period ?? 14,
         rsi_overbought: s.rsi_overbought ?? 70,
         rsi_oversold: s.rsi_oversold ?? 30,
+        wyckoff_range_period: s.wyckoff_range_period ?? 20,
+        wyckoff_volume_mult: s.wyckoff_volume_mult ?? 1.5,
+        wyckoff_tp_mult: s.wyckoff_tp_mult ?? 2.0,
       });
       if (s.active_strategy) {
         setExpanded(s.active_strategy);
@@ -46,11 +49,17 @@ export default function StrategiesPage() {
       payload.rsi_period = values.rsi_period;
       payload.rsi_overbought = values.rsi_overbought;
       payload.rsi_oversold = values.rsi_oversold;
+    } else if (strategyKey === "wyckoff_1") {
+      payload.wyckoff_range_period = values.wyckoff_range_period;
+      payload.wyckoff_volume_mult = values.wyckoff_volume_mult;
+      payload.wyckoff_tp_mult = values.wyckoff_tp_mult;
     }
 
     const r = await postJSON<{ ok: boolean; settings: BotSettings }>("/api/settings", payload);
     if (r.ok) {
       setActiveStrategy(r.settings.active_strategy);
+      const activeStr = r.settings.active_strategy;
+      const strategyLabel = activeStr === "bollinger" ? "Bollinger" : activeStr === "rsi" ? "RSI" : "Wyckoff 1";
       setValues({
         timeframe: r.settings.timeframe || "m15",
         bb_period: r.settings.bb_period,
@@ -61,8 +70,11 @@ export default function StrategiesPage() {
         rsi_period: r.settings.rsi_period,
         rsi_overbought: r.settings.rsi_overbought,
         rsi_oversold: r.settings.rsi_oversold,
+        wyckoff_range_period: r.settings.wyckoff_range_period,
+        wyckoff_volume_mult: r.settings.wyckoff_volume_mult,
+        wyckoff_tp_mult: r.settings.wyckoff_tp_mult,
       });
-      setMsg({ text: `✓ Estrategia ${strategyKey === "bollinger" ? "Bollinger" : "RSI"} guardada y activada.`, ok: true });
+      setMsg({ text: `✓ Estrategia ${strategyLabel} guardada y activada.`, ok: true });
     } else {
       setMsg({ text: "Error al guardar", ok: false });
     }
@@ -255,6 +267,66 @@ export default function StrategiesPage() {
             <div className="form-actions">
               <button className="btn btn-start" onClick={() => save("rsi")}>
                 {activeStrategy === "rsi" ? "GUARDAR CAMBIOS" : "GUARDAR Y ACTIVAR"}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* WYCKOFF STRATEGY CARD */}
+      <div className="card narrow" style={{ padding: 0, overflow: "hidden" }}>
+        <div 
+          className="accordion-header" 
+          onClick={() => toggleExpand("wyckoff_1")}
+          style={{ background: "var(--card)", padding: "20px 24px" }}
+        >
+          <div className="strategy-title-row">
+            <span className="strategy-name" style={{ fontSize: "16px" }}>Método Wyckoff 1 (Ruptura de Rango con Volumen)</span>
+            {activeStrategy === "wyckoff_1" && <span className="chip ok ml">ACTIVA</span>}
+          </div>
+          <span className="arrow" style={{ fontSize: "14px" }}>{expanded === "wyckoff_1" ? "▲" : "▼"}</span>
+        </div>
+        
+        {expanded === "wyckoff_1" && (
+          <div className="accordion-content" style={{ padding: "24px", background: "var(--card)" }}>
+            <div className="form-grid">
+              {selectTimeframe}
+              <label>
+                PERÍODO RANGO
+                <input
+                  type="number"
+                  min={5}
+                  max={100}
+                  value={values.wyckoff_range_period ?? ""}
+                  onChange={(e) => setValues({ ...values, wyckoff_range_period: +e.target.value })}
+                />
+              </label>
+              <label>
+                CONFIRMACIÓN VOLUMEN (MULT)
+                <input
+                  type="number"
+                  min={1.0}
+                  max={5.0}
+                  step={0.1}
+                  value={values.wyckoff_volume_mult ?? ""}
+                  onChange={(e) => setValues({ ...values, wyckoff_volume_mult: +e.target.value })}
+                />
+              </label>
+              <label>
+                MULT. PROVECHO (×RISK TO TP)
+                <input
+                  type="number"
+                  min={0.5}
+                  max={10}
+                  step={0.1}
+                  value={values.wyckoff_tp_mult ?? ""}
+                  onChange={(e) => setValues({ ...values, wyckoff_tp_mult: +e.target.value })}
+                />
+              </label>
+            </div>
+            <div className="form-actions">
+              <button className="btn btn-start" onClick={() => save("wyckoff_1")}>
+                {activeStrategy === "wyckoff_1" ? "GUARDAR CAMBIOS" : "GUARDAR Y ACTIVAR"}
               </button>
             </div>
           </div>

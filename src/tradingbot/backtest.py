@@ -144,14 +144,25 @@ def run_backtest(
                 and (equity - day_start_equity) / day_start_equity > -risk.daily_loss_limit
             ):
                 entry = opens[i]
-                atr_val = d["atr"].iloc[i - 1]
-                if pd.isna(atr_val) or atr_val <= 0:
-                    continue
-                stop_distance = strategy_params.sl_atr_mult * atr_val
-                if strategy_params.active_strategy == "rsi":
-                    tp = entry + 1.5 * stop_distance if side == LONG else entry - 1.5 * stop_distance
+                if strategy_params.active_strategy == "wyckoff_1":
+                    r_high = d["wyckoff_r_high"].iloc[i - 1]
+                    r_low = d["wyckoff_r_low"].iloc[i - 1]
+                    if side == LONG:
+                        stop_distance = entry - r_high
+                    else:
+                        stop_distance = r_low - entry
+                    if pd.isna(stop_distance) or stop_distance <= 0:
+                        continue
+                    tp = entry + strategy_params.wyckoff_tp_mult * stop_distance if side == LONG else entry - strategy_params.wyckoff_tp_mult * stop_distance
                 else:
-                    tp = d["bb_mid"].iloc[i - 1]
+                    atr_val = d["atr"].iloc[i - 1]
+                    if pd.isna(atr_val) or atr_val <= 0:
+                        continue
+                    stop_distance = strategy_params.sl_atr_mult * atr_val
+                    if strategy_params.active_strategy == "rsi":
+                        tp = entry + 1.5 * stop_distance if side == LONG else entry - 1.5 * stop_distance
+                    else:
+                        tp = d["bb_mid"].iloc[i - 1]
                 if pd.isna(tp):
                     continue
                 units = size_position(equity, risk.risk_per_trade, stop_distance, risk.min_lot)
@@ -233,7 +244,8 @@ def synthetic_df(
     low = close - np.abs(rng.normal(0, vol * 0.6, n))
     open_ = np.roll(close, 1)
     open_[0] = close[0]
-    return pd.DataFrame({"open": open_, "high": high, "low": low, "close": close}, index=idx)
+    volume = rng.uniform(50, 150, n).astype(float)
+    return pd.DataFrame({"open": open_, "high": high, "low": low, "close": close, "volume": volume}, index=idx)
 
 
 def download_history(
@@ -289,12 +301,21 @@ def load_csv(path: str | Path, timeframe: str = "m15") -> pd.DataFrame:
         df["time"] = pd.to_datetime(df["time"], utc=True)
     df = df.set_index("time").sort_index()
     df.index = df.index.tz_localize("UTC") if df.index.tz is None else df.index.tz_convert("UTC")
-    ohlc = df[["open", "high", "low", "close"]].astype(float)
+    cols = ["open", "high", "low", "close"]
+    if "volume" in df.columns:
+        cols.append("volume")
+    ohlc = df[cols].astype(float)
+    if "volume" not in ohlc.columns:
+        ohlc["volume"] = 100.0
+
     freq = TF_FREQ.get(timeframe, "15min")
     if len(ohlc) > 1 and (ohlc.index[1] - ohlc.index[0]) < pd.Timedelta(freq):
+        agg_dict = {"open": "first", "high": "max", "low": "min", "close": "last"}
+        if "volume" in ohlc.columns:
+            agg_dict["volume"] = "sum"
         ohlc = (
             ohlc.resample(freq)
-            .agg({"open": "first", "high": "max", "low": "min", "close": "last"})
+            .agg(agg_dict)
             .dropna()
         )
     return ohlc

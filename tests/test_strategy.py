@@ -19,10 +19,10 @@ from tradingbot.strategy import (
 P = StrategyParams()
 
 
-def make_df(closes: list[float]) -> pd.DataFrame:
+def make_df(closes: list[float], volumes: list[float] | None = None) -> pd.DataFrame:
     idx = pd.date_range("2026-01-05 00:00", periods=len(closes), freq="15min", tz="UTC")
     close = pd.Series(closes, index=idx)
-    return pd.DataFrame(
+    df = pd.DataFrame(
         {
             "open": close.shift(1).fillna(close.iloc[0]),
             "high": close + 0.0003,
@@ -30,6 +30,9 @@ def make_df(closes: list[float]) -> pd.DataFrame:
             "close": close,
         }
     )
+    if volumes is not None:
+        df["volume"] = pd.Series(volumes, index=idx)
+    return df
 
 
 def zigzag(n: int, base: float = 1.1000, amp: float = 0.00025) -> list[float]:
@@ -105,3 +108,32 @@ def test_indicators_no_lookahead():
     closes2 = closes[:-1] + [1.2000]
     b = compute_signals(make_df(closes2), P)
     assert a.iloc[:-1].astype(str).equals(b.iloc[:-1].astype(str))
+
+
+def test_wyckoff_long_signal():
+    closes = [1.1000] * 20 + [1.1010]
+    volumes = [100.0] * 20 + [200.0]
+    p = StrategyParams(active_strategy="wyckoff_1", wyckoff_range_period=20, wyckoff_volume_mult=1.5)
+    df = make_df(closes, volumes)
+    sigs = compute_signals(df, p)
+    assert sigs.iloc[-1] == LONG
+    assert sigs.iloc[:-1].isna().all()
+
+
+def test_wyckoff_short_signal():
+    closes = [1.1000] * 20 + [1.0990]
+    volumes = [100.0] * 20 + [200.0]
+    p = StrategyParams(active_strategy="wyckoff_1", wyckoff_range_period=20, wyckoff_volume_mult=1.5)
+    df = make_df(closes, volumes)
+    sigs = compute_signals(df, p)
+    assert sigs.iloc[-1] == SHORT
+    assert sigs.iloc[:-1].isna().all()
+
+
+def test_wyckoff_no_signal_low_volume():
+    closes = [1.1000] * 20 + [1.1010]
+    volumes = [100.0] * 20 + [110.0]
+    p = StrategyParams(active_strategy="wyckoff_1", wyckoff_range_period=20, wyckoff_volume_mult=1.5)
+    df = make_df(closes, volumes)
+    sigs = compute_signals(df, p)
+    assert sigs.iloc[-1] is np.nan

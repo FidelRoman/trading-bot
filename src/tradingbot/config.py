@@ -30,6 +30,11 @@ class StrategyParams:
     rsi_period: int = 14
     rsi_overbought: float = 70.0
     rsi_oversold: float = 30.0
+    # Wyckoff Strategy:
+    wyckoff_range_period: int = 20
+    wyckoff_volume_mult: float = 1.5
+    wyckoff_tp_mult: float = 2.0
+
 
 
 @dataclass(frozen=True)

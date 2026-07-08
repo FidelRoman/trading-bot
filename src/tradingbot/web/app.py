@@ -151,8 +151,9 @@ VALID_TF = {"m5", "m15", "m30", "h1", "h4"}
 async def candles(count: int = 200, tf: str = "m15"):
     tf = tf if tf in VALID_TF else "m15"
     params = app.state.engine.strategy_params()
+    max_period = max(params.bb_period, getattr(params, "wyckoff_range_period", 20))
     df = await asyncio.to_thread(
-        lambda: app.state.broker.get_candles(count + params.bb_period, timeframe=tf)
+        lambda: app.state.broker.get_candles(count + max_period, timeframe=tf)
     )
     if df.empty:
         return {"candles": [], "bands": []}
@@ -163,11 +164,18 @@ async def candles(count: int = 200, tf: str = "m15"):
         {"time": t, "open": round(o, 5), "high": round(h, 5), "low": round(l, 5), "close": round(c, 5)}
         for t, o, h, l, c in zip(ts, d["open"], d["high"], d["low"], d["close"])
     ]
-    bands = [
-        {"time": t, "upper": round(u, 5), "mid": round(m, 5), "lower": round(lo, 5)}
-        for t, u, m, lo in zip(ts, d["bb_upper"], d["bb_mid"], d["bb_lower"])
-        if u == u  # descarta NaN del warm-up
-    ]
+    if params.active_strategy == "wyckoff_1":
+        bands = [
+            {"time": t, "upper": round(u, 5), "mid": round((u + lo) / 2, 5), "lower": round(lo, 5)}
+            for t, u, lo in zip(ts, d["wyckoff_r_high"], d["wyckoff_r_low"])
+            if u == u  # descarta NaN
+        ]
+    else:
+        bands = [
+            {"time": t, "upper": round(u, 5), "mid": round(m, 5), "lower": round(lo, 5)}
+            for t, u, m, lo in zip(ts, d["bb_upper"], d["bb_mid"], d["bb_lower"])
+            if u == u  # descarta NaN del warm-up
+        ]
     return {"candles": candles_out, "bands": bands}
 
 
@@ -423,7 +431,7 @@ async def backtest_start(payload: dict = Body(...)):
         return {"ok": False, "error": "Rango máximo: 5 años"}
 
     strategy = payload.get("strategy")
-    if strategy and strategy not in ("bollinger", "rsi"):
+    if strategy and strategy not in ("bollinger", "rsi", "wyckoff_1"):
         return {"ok": False, "error": f"Estrategia inválida: {strategy}"}
 
     if not job.start_allowed():

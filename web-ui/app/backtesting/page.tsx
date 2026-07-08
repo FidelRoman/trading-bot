@@ -107,10 +107,11 @@ export default function Backtesting() {
             <span className="chip">
               {st.params.active_strategy === "rsi" ? (
                 `RSI(${st.params.rsi_period})`
+              ) : st.params.active_strategy === "wyckoff_1" ? (
+                `Wyckoff(R:${st.params.wyckoff_range_period},V:${st.params.wyckoff_volume_mult})`
               ) : (
                 `BB(${st.params.bb_period},${st.params.bb_std})`
-              )} · SL {st.params.sl_atr_mult}×ATR(
-              {st.params.atr_period}) · riesgo {(st.params.risk_per_trade * 100).toFixed(1)}%
+              )} · SL {st.params.active_strategy === "wyckoff_1" ? "Límite Rango" : `${st.params.sl_atr_mult}×ATR(${st.params.atr_period})`} · riesgo {(st.params.risk_per_trade * 100).toFixed(1)}%
             </span>
           )}
         </div>
@@ -120,6 +121,7 @@ export default function Backtesting() {
             <select value={strategy} onChange={(e) => setStrategy(e.target.value)}>
               <option value="bollinger">Reversión Bollinger</option>
               <option value="rsi">Estrategia RSI</option>
+              <option value="wyckoff_1">Método Wyckoff 1</option>
             </select>
           </label>
           <label className="bt-field">

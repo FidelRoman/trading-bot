@@ -95,6 +95,9 @@ export interface BotSettings {
   rsi_period: number;
   rsi_overbought: number;
   rsi_oversold: number;
+  wyckoff_range_period?: number;
+  wyckoff_volume_mult?: number;
+  wyckoff_tp_mult?: number;
   risk_per_trade: number;
   daily_loss_limit: number;
   max_trades_per_day: number;
@@ -129,6 +132,9 @@ export interface BacktestState {
     rsi_period?: number;
     rsi_overbought?: number;
     rsi_oversold?: number;
+    wyckoff_range_period?: number;
+    wyckoff_volume_mult?: number;
+    wyckoff_tp_mult?: number;
     atr_period: number;
     sl_atr_mult: number;
     risk_per_trade: number;

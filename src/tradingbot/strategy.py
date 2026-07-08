@@ -62,6 +62,14 @@ def add_indicators(df: pd.DataFrame, p: StrategyParams) -> pd.DataFrame:
         axis=1,
     ).max(axis=1)
     out["atr"] = tr.ewm(alpha=1.0 / p.atr_period, adjust=False, min_periods=p.atr_period).mean()
+
+    # Wyckoff
+    if "volume" not in out.columns:
+        out["volume"] = 100.0
+    out["wyckoff_r_high"] = out["high"].shift(1).rolling(window=p.wyckoff_range_period).max()
+    out["wyckoff_r_low"] = out["low"].shift(1).rolling(window=p.wyckoff_range_period).min()
+    out["wyckoff_avg_volume"] = out["volume"].shift(1).rolling(window=p.wyckoff_range_period).mean()
+
     return out
 
 
@@ -78,6 +86,15 @@ def compute_signals(df: pd.DataFrame, p: StrategyParams) -> pd.Series:
         prev_rsi = rsi.shift(1)
         long_sig = (prev_rsi < p.rsi_oversold) & (rsi >= p.rsi_oversold)
         short_sig = (prev_rsi > p.rsi_overbought) & (rsi <= p.rsi_overbought)
+    elif p.active_strategy == "wyckoff_1":
+        close, prev_close = d["close"], d["close"].shift(1)
+        r_high = d["wyckoff_r_high"]
+        r_low = d["wyckoff_r_low"]
+        volume = d["volume"]
+        avg_vol = d["wyckoff_avg_volume"]
+        
+        long_sig = (close > r_high) & (prev_close <= r_high) & (volume > avg_vol * p.wyckoff_volume_mult)
+        short_sig = (close < r_low) & (prev_close >= r_low) & (volume > avg_vol * p.wyckoff_volume_mult)
     else:
         close, prev_close = d["close"], d["close"].shift(1)
         lower, prev_lower = d["bb_lower"], d["bb_lower"].shift(1)
@@ -107,12 +124,25 @@ def latest_signal(df: pd.DataFrame, p: StrategyParams) -> Optional[Signal]:
         return None
     ts = d.index[-1].to_pydatetime()
     ref_close = float(last["close"])
-    stop_distance = float(p.sl_atr_mult * last["atr"])
-    
-    if p.active_strategy == "rsi":
-        take_profit = ref_close + (1.5 * stop_distance) if side == LONG else ref_close - (1.5 * stop_distance)
+    if p.active_strategy == "wyckoff_1":
+        r_high = float(last["wyckoff_r_high"])
+        r_low = float(last["wyckoff_r_low"])
+        if side == LONG:
+            stop_distance = ref_close - r_high
+            if stop_distance <= 0:
+                return None
+            take_profit = ref_close + (p.wyckoff_tp_mult * stop_distance)
+        else:
+            stop_distance = r_low - ref_close
+            if stop_distance <= 0:
+                return None
+            take_profit = ref_close - (p.wyckoff_tp_mult * stop_distance)
     else:
-        take_profit = float(last["bb_mid"])
+        stop_distance = float(p.sl_atr_mult * last["atr"])
+        if p.active_strategy == "rsi":
+            take_profit = ref_close + (1.5 * stop_distance) if side == LONG else ref_close - (1.5 * stop_distance)
+        else:
+            take_profit = float(last["bb_mid"])
 
     return Signal(
         side=side,

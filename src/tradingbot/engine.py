@@ -18,7 +18,7 @@ from .strategy import entry_allowed, latest_signal, size_position, spread_ok
 
 # Rangos permitidos para ajustes desde la interfaz: clave -> (min, max, tipo) o (opciones, tipo)
 SETTING_BOUNDS = {
-    "active_strategy": (["bollinger", "rsi"], str),
+    "active_strategy": (["bollinger", "rsi", "wyckoff_1"], str),
     "timeframe": (["m5", "m15", "m30", "h1", "h4"], str),
     "bb_period": (10, 50, int),
     "bb_std": (1.0, 3.0, float),
@@ -28,6 +28,9 @@ SETTING_BOUNDS = {
     "rsi_period": (5, 50, int),
     "rsi_overbought": (50.0, 90.0, float),
     "rsi_oversold": (10.0, 50.0, float),
+    "wyckoff_range_period": (5, 100, int),
+    "wyckoff_volume_mult": (1.0, 5.0, float),
+    "wyckoff_tp_mult": (0.5, 10.0, float),
     "risk_per_trade": (0.001, 0.02, float),
     "daily_loss_limit": (0.01, 0.10, float),
     "max_trades_per_day": (1, 20, int),
@@ -105,6 +108,9 @@ class BotEngine:
             rsi_period=int(o.get("rsi_period", b.rsi_period)),
             rsi_overbought=float(o.get("rsi_overbought", b.rsi_overbought)),
             rsi_oversold=float(o.get("rsi_oversold", b.rsi_oversold)),
+            wyckoff_range_period=int(o.get("wyckoff_range_period", b.wyckoff_range_period)),
+            wyckoff_volume_mult=float(o.get("wyckoff_volume_mult", b.wyckoff_volume_mult)),
+            wyckoff_tp_mult=float(o.get("wyckoff_tp_mult", b.wyckoff_tp_mult)),
         )
 
     def risk_params(self) -> RiskParams:
@@ -130,6 +136,9 @@ class BotEngine:
             "rsi_period": sp.rsi_period,
             "rsi_overbought": sp.rsi_overbought,
             "rsi_oversold": sp.rsi_oversold,
+            "wyckoff_range_period": sp.wyckoff_range_period,
+            "wyckoff_volume_mult": sp.wyckoff_volume_mult,
+            "wyckoff_tp_mult": sp.wyckoff_tp_mult,
             "risk_per_trade": rp.risk_per_trade,
             "daily_loss_limit": rp.daily_loss_limit,
             "max_trades_per_day": rp.max_trades_per_day,

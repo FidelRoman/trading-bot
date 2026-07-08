@@ -102,3 +102,26 @@ def test_synthetic_pipeline_runs():
     assert "profit_factor" in s and "max_drawdown_pct" in s
     # el equity final debe cuadrar con la suma de P&L
     assert res.equity_curve.iloc[-1] == pytest.approx(EQ0 + s["net_profit"], abs=0.01)
+
+
+def test_wyckoff_backtest_execution():
+    closes = [1.1000] * 20 + [1.1010] + [1.1015, 1.1020, 1.1025]
+    volumes = [100.0] * 20 + [200.0] + [100.0, 100.0, 100.0]
+    idx = pd.date_range("2026-01-05 00:00", periods=len(closes), freq="15min", tz="UTC")
+    close = pd.Series(closes, index=idx)
+    df = pd.DataFrame(
+        {
+            "open": close.shift(1).fillna(close.iloc[0]),
+            "high": close + 0.0003,
+            "low": close - 0.0003,
+            "close": close,
+            "volume": pd.Series(volumes, index=idx),
+        }
+    )
+    p = StrategyParams(active_strategy="wyckoff_1", wyckoff_range_period=20, wyckoff_volume_mult=1.5, wyckoff_tp_mult=2.0)
+    res = run_backtest(df, p, R, initial_equity=EQ0, spread_pips=SPREAD)
+    assert len(res.trades) == 1
+    t = res.trades[0]
+    assert t.side == "long"
+    assert t.entry == pytest.approx(df["open"].iloc[21])
+    assert t.reason in ("tp", "end")
