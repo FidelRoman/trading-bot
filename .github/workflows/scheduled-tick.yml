@@ -23,6 +23,7 @@ jobs:
         run: |
           python -m pip install "pip<24.1"
           python -m pip install -r requirements-bot.txt
+          sh scripts/fix_forexconnect_linux.sh
       - name: Process one closed candle and publish snapshot
         env:
           FXCM_USER: ${{ secrets.FXCM_USER }}
