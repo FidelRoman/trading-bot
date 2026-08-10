@@ -47,6 +47,128 @@ export interface Status {
   open_trade: Record<string, unknown> | null;
   stats: Stats;
   last_candle: string | null;
+  net_position?: number;
+  active_model?: string | null;
+  last_decision?: Decision | null;
+}
+
+/* -- FSRPPO ------------------------------------------------------------- */
+
+export interface Decision {
+  action: number[];
+  target_position: number;
+  delta_units: number;
+  side: "buy" | "sell" | "hold";
+  price: number;
+  hursts: number[];
+  kept: boolean[];
+  discarded_energy: number;
+}
+
+export interface FsrPreview {
+  ok: boolean;
+  error?: string;
+  window: number;
+  times: string[];
+  prices: number[];
+  signal: number[];
+  imfs: number[][];
+  hursts: number[];
+  kept: boolean[];
+  discarded_energy: number;
+}
+
+/** Las siete métricas de la Tabla 2 del paper. */
+export interface PaperMetrics {
+  crr: number | null;
+  arr: number | null;
+  avr: number | null;
+  max_drawdown: number | null;
+  sharpe: number | null;
+  calmar: number | null;
+  sortino: number | null;
+  bars?: number;
+  trades?: number;
+  strategy?: string;
+}
+
+export interface TrainingCurvePoint {
+  iteration: number;
+  mean_reward: number;
+  mean_equity: number;
+  policy_loss: number;
+  value_loss: number;
+  entropy: number;
+}
+
+export interface TrainingState {
+  status: "idle" | "running" | "done" | "error";
+  kind?: "training" | "precompute";
+  note?: string;
+  progress?: number;
+  error?: string;
+  run_id?: string;
+  elapsed_s?: number;
+  bars?: number;
+  curve?: TrainingCurvePoint[];
+  train_metrics?: PaperMetrics;
+  test_metrics?: PaperMetrics;
+  benchmark_metrics?: PaperMetrics;
+  activated?: boolean;
+}
+
+export interface ModelRecord {
+  run_id: string;
+  created_at: string;
+  instrument: string;
+  timeframe: string;
+  train_range: string[];
+  test_range: string[];
+  fsr_params: Record<string, unknown>;
+  ppo_params: Record<string, unknown>;
+  env_params: Record<string, unknown>;
+  train_metrics: PaperMetrics;
+  test_metrics: PaperMetrics;
+  benchmark_metrics: PaperMetrics;
+  feature_scale?: number;
+  is_active?: boolean;
+}
+
+export interface InstrumentSpec {
+  symbol: string;
+  pip: number;
+  min_lot: number;
+  typical_spread_pips: number;
+  quote_currency: string;
+}
+
+export interface MarketRankingRow {
+  rank: number;
+  symbol: string;
+  timeframe: string;
+  eligible: boolean;
+  winner: boolean;
+  validation: {
+    median_sharpe: number | null;
+    median_crr: number | null;
+    benchmark_crr: number | null;
+  };
+}
+
+export interface MarketSelection {
+  ok: boolean;
+  error?: string;
+  filename?: string;
+  created_at?: string;
+  ranking?: MarketRankingRow[];
+  winner?: { symbol: string; timeframe: string };
+  test?: {
+    passed: number;
+    required: number;
+    total: number;
+    accepted: boolean;
+    benchmark_metrics: PaperMetrics;
+  };
 }
 
 export interface Trade {

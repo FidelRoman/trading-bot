@@ -20,8 +20,9 @@ log = logging.getLogger(__name__)
 
 
 class FxcmBroker:
-    def __init__(self, creds: FxcmCredentials):
+    def __init__(self, creds: FxcmCredentials, instrument: str = INSTRUMENT):
         self._creds = creds
+        self.instrument = instrument
         self._fx: Optional[ForexConnect] = None
         self._lock = threading.RLock()
         self._account_id: Optional[str] = None
@@ -55,7 +56,7 @@ class FxcmBroker:
                 raise RuntimeError("La cuenta FXCM no tiene filas en la tabla ACCOUNTS")
             self._account_id = account.account_id
             provider = fx.login_rules.trading_settings_provider
-            self._base_unit_size = provider.get_base_unit_size(INSTRUMENT, account)
+            self._base_unit_size = provider.get_base_unit_size(self.instrument, account)
             log.info(
                 "Conectado a FXCM (%s), cuenta %s, base_unit_size=%d",
                 self._creds.connection,
@@ -97,7 +98,7 @@ class FxcmBroker:
         tf = self._TF_FXCM.get(timeframe.lower(), timeframe)
         with self._lock:
             fx = self._fx_or_raise()
-            history = fx.get_history(INSTRUMENT, tf, date_from, date_to, count)
+            history = fx.get_history(self.instrument, tf, date_from, date_to, count)
         df = pd.DataFrame(history)
         if df.empty:
             return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
@@ -119,9 +120,9 @@ class FxcmBroker:
         """Bid/ask/spread actuales desde la tabla OFFERS."""
         with self._lock:
             fx = self._fx_or_raise()
-            offer = Common.get_offer(fx, INSTRUMENT)
+            offer = Common.get_offer(fx, self.instrument)
         if offer is None:
-            raise RuntimeError(f"Sin oferta para {INSTRUMENT}")
+            raise RuntimeError(f"Sin oferta para {self.instrument}")
         return {
             "bid": float(offer.bid),
             "ask": float(offer.ask),
@@ -156,7 +157,7 @@ class FxcmBroker:
             table = fx.get_table(ForexConnect.TRADES)
             rows = []
             for t in table:
-                if t.instrument != INSTRUMENT:
+                if t.instrument != self.instrument:
                     continue
                 rows.append(
                     {
@@ -210,7 +211,7 @@ class FxcmBroker:
         is_long = side == "long"
         with self._lock:
             fx = self._fx_or_raise()
-            offer = Common.get_offer(fx, INSTRUMENT)
+            offer = Common.get_offer(fx, self.instrument)
             request = fx.create_order_request(
                 order_type=fxcorepy.Constants.Orders.TRUE_MARKET_OPEN,
                 OFFER_ID=offer.offer_id,
@@ -227,7 +228,7 @@ class FxcmBroker:
             order_id = str(resp.order_id)
         log.info(
             "Orden enviada: %s %d %s SL=%.1f pips TP=%.5f (order_id=%s)",
-            side, units, INSTRUMENT, stop_pips, take_profit, order_id,
+            side, units, self.instrument, stop_pips, take_profit, order_id,
         )
         return order_id
 

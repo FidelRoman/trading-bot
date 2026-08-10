@@ -6,10 +6,13 @@ import { useLive } from "@/lib/live";
 
 const NAV = [
   { href: "/", ico: "▦", label: "Dashboard" },
+  { href: "/fsr", ico: "∿", label: "Señal FSR" },
+  { href: "/train", ico: "◈", label: "Entrenamiento" },
+  { href: "/models", ico: "⧉", label: "Modelos" },
   { href: "/strategies", ico: "⚙", label: "Estrategias" },
   { href: "/settings", ico: "🔧", label: "Ajustes" },
   { href: "/history", ico: "⟲", label: "Historial" },
-  { href: "/activity", ico: "∿", label: "Monitor de Actividad" },
+  { href: "/activity", ico: "▤", label: "Monitor de Actividad" },
 ];
 
 export default function Sidebar() {

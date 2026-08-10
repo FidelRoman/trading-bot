@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { LiveProvider } from "@/lib/live";
 import Shell from "@/components/Shell";
+import AuthGate from "@/components/AuthGate";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -23,9 +24,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body>
-        <LiveProvider>
-          <Shell>{children}</Shell>
-        </LiveProvider>
+        <AuthGate>
+          <LiveProvider>
+            <Shell>{children}</Shell>
+          </LiveProvider>
+        </AuthGate>
       </body>
     </html>
   );

@@ -26,6 +26,49 @@ button { font-family: inherit; cursor: pointer; }
 input, select { font-family: inherit; }
 a { color: inherit; text-decoration: none; }
 
+button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.auth-shell {
+  min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 24px;
+  background:
+    radial-gradient(circle at 50% 20%, rgba(154, 168, 248, 0.12), transparent 36%),
+    var(--bg);
+}
+.auth-card {
+  width: min(100%, 440px); padding: 32px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.36);
+}
+.auth-mark {
+  width: 52px; height: 52px; display: grid; place-items: center; margin-bottom: 24px;
+  border: 1px solid #47548a; border-radius: 12px; background: var(--blue-deep);
+  color: #cfd9ff; font-family: var(--grotesk); font-size: 16px; font-weight: 700;
+}
+.auth-kicker { color: var(--blue); font-size: 10px; letter-spacing: 1.8px; }
+.auth-card h1 { margin-top: 8px; font-family: var(--grotesk); font-size: 26px; }
+.auth-copy { margin-top: 12px; color: var(--dim); font-size: 12px; line-height: 1.65; }
+.auth-form { display: flex; flex-direction: column; gap: 10px; margin-top: 24px; }
+.auth-form label { color: var(--dim); font-size: 10px; letter-spacing: 1.4px; }
+.auth-form input {
+  min-height: 44px; padding: 11px 12px; color: var(--text); background: var(--card2);
+  border: 1px solid var(--border); border-radius: 8px; font-size: 16px;
+}
+.auth-error { color: var(--red); font-size: 11px; line-height: 1.5; }
+.auth-submit { min-height: 44px; margin-top: 6px; }
+.top-actions .link-btn { min-width: 44px; min-height: 44px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 .app { display: flex; min-height: 100vh; }
 
 /* ================= sidebar ================= */
@@ -107,6 +150,10 @@ a { color: inherit; text-decoration: none; }
 }
 .btn:hover { filter: brightness(1.15); }
 .btn:disabled { opacity: 0.35; cursor: not-allowed; filter: none; }
+.btn[role="tab"] { min-height: 44px; }
+.btn[role="tab"][aria-selected="true"] {
+  background: var(--blue-deep); color: var(--text); border-color: var(--blue);
+}
 .btn-start { background: var(--blue-deep); color: #cfd9ff; border-color: #34426a; }
 .btn-stop { background: #331d1f; color: var(--red); border-color: #55302f; }
 .btn-buy { background: #2f9e63; color: #062b18; width: 100%; }
@@ -243,6 +290,7 @@ table { width: 100%; border-collapse: collapse; font-size: 12px; }
 th { text-align: left; color: var(--dim); font-size: 9px; letter-spacing: 1.8px; padding: 9px 10px; border-bottom: 1px solid var(--border); }
 td { padding: 10px; border-bottom: 1px solid var(--border-soft); }
 tr:hover td { background: rgba(255, 255, 255, 0.02); }
+.ranking-winner td { background: rgba(74, 222, 128, 0.06); }
 .dir-long { color: var(--green); font-weight: 800; }
 .dir-short { color: var(--red); font-weight: 800; }
 .empty { color: var(--dim); font-size: 12px; padding: 14px 2px; }
@@ -264,6 +312,12 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
 .hint.ok { color: var(--green); }
 .hint.err { color: var(--red); }
 .hint b { color: var(--text); }
+.model-filter { display: flex; align-items: center; gap: 8px; }
+.model-filter select {
+  min-height: 44px; min-width: 150px; padding: 10px 12px;
+  color: var(--text); background: var(--card2); color-scheme: dark;
+  border: 1px solid var(--border); border-radius: 8px;
+}
 
 /* ================= backtesting ================= */
 .bt-form {
@@ -355,3 +409,12 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
   border-top: 1px solid var(--border-soft);
   background: var(--card);
 }
+
+/* ================= FSRPPO: entrenamiento y modelos ================= */
+.btn.primary { background: var(--green-deep); color: var(--green); border-color: #2b5c42; }
+.btn.danger { background: var(--red-deep); color: var(--red); border-color: #5f3736; padding: 10px 12px; }
+.linkish {
+  font-family: var(--mono); font-size: 12px; color: var(--blue);
+  background: none; border: none; padding: 0; cursor: pointer; text-align: left;
+}
+.linkish:hover { text-decoration: underline; }

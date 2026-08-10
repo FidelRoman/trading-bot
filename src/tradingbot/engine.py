@@ -18,7 +18,7 @@ from .strategy import entry_allowed, latest_signal, size_position, spread_ok
 
 # Rangos permitidos para ajustes desde la interfaz: clave -> (min, max, tipo) o (opciones, tipo)
 SETTING_BOUNDS = {
-    "active_strategy": (["bollinger", "rsi", "wyckoff_1"], str),
+    "active_strategy": (["fsrppo", "bollinger", "rsi", "wyckoff_1"], str),
     "timeframe": (["m5", "m15", "m30", "h1", "h4"], str),
     "bb_period": (10, 50, int),
     "bb_std": (1.0, 3.0, float),
@@ -68,6 +68,9 @@ class BotEngine:
         self._stop = False
         self._last_processed: Optional[datetime] = None
         self._last_equity_snap = 0.0
+        self._policy = None
+        self._policy_run_id: Optional[str] = None
+        self._run_once_lock = asyncio.Lock()
         self.on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None
         if self.store.get_state("running") is None:
             self.store.set_state("running", True)
@@ -228,6 +231,30 @@ class BotEngine:
             await asyncio.sleep(FAST_TICK_SECONDS)
         self.store.log("info", "Engine detenido")
 
+    async def run_once(self, now: Optional[datetime] = None) -> dict:
+        """Procesa como maximo una vela cerrada y persiste su frontera.
+
+        Es el punto de entrada de GitHub Actions/Koyeb. Repetir la misma llamada
+        es inocuo incluso si el scheduler reintenta despues de un timeout.
+        """
+        async with self._run_once_lock:
+            moment = now or datetime.now(timezone.utc)
+            sp = self.strategy_params()
+            boundary = last_closed_boundary(moment, sp.timeframe)
+            persisted = self.store.get_state("last_processed_boundary")
+            if persisted == boundary.isoformat():
+                return {"processed": False, "reason": "already_processed", "boundary": persisted}
+
+            await asyncio.to_thread(self._ensure_connected)
+            await asyncio.to_thread(self._watch_position)
+            await asyncio.to_thread(self._maybe_snapshot_equity)
+            await asyncio.to_thread(self._candle_tick, boundary)
+            value = boundary.isoformat()
+            self._last_processed = boundary
+            self.store.set_state("last_processed_boundary", value)
+            await self._emit("candle", {"boundary": value})
+            return {"processed": True, "boundary": value}
+
     async def _emit(self, kind: str, data: dict) -> None:
         if self.on_event is not None:
             try:
@@ -306,6 +333,11 @@ class BotEngine:
         now = datetime.now(timezone.utc)
         seconds = TF_SECONDS.get(sp.timeframe.lower(), 15 * 60)
         candles = candles[[ts + timedelta(seconds=seconds) <= now for ts in candles.index]]
+
+        if sp.active_strategy == "fsrppo":
+            self._fsrppo_tick(candles, rp, now)
+            return
+
         warmup = max(sp.bb_period, sp.rsi_period) + 2
         if candles.empty or len(candles) < warmup:
             return
@@ -363,6 +395,100 @@ class BotEngine:
             f"TP {sig.take_profit:.5f} (orden {order_id})",
         )
 
+    # -- decisión por vela: FSRPPO -----------------------------------------
+
+    def policy(self):
+        """Política del modelo activo, recargada si el modelo activo cambia."""
+        from .rl.policy import FsrppoPolicy
+        from .rl.registry import ModelRegistry
+
+        activo = ModelRegistry().active_id()
+        if activo != self._policy_run_id:
+            self._policy = FsrppoPolicy.load_active() if activo else None
+            self._policy_run_id = activo
+        return self._policy
+
+    def _fsrppo_tick(self, candles, rp: RiskParams, now: datetime) -> None:
+        """Ajusta la posición neta según lo que decida el agente.
+
+        El agente propone y el overlay de riesgo dispone: fuera de sesión, con
+        spread ancho o tras tocar el límite de pérdida diaria, la única acción
+        permitida es reducir exposición, nunca ampliarla.
+        """
+        policy = self.policy()
+        if policy is None:
+            self.store.log("warn", "FSRPPO activo pero no hay modelo entrenado seleccionado")
+            return
+        if len(candles) < policy.required_bars:
+            self.store.log(
+                "warn",
+                f"Histórico insuficiente: {len(candles)} velas de {policy.required_bars}",
+            )
+            return
+
+        broker_neto = hasattr(self.broker, "set_position")
+        if not broker_neto:
+            self.store.log(
+                "error",
+                "FSRPPO necesita un bróker de posición neta (paper trading). "
+                "La ejecución de posición neta contra FXCM no está implementada.",
+            )
+            return
+
+        posicion = int(getattr(self.broker, "position", 0))
+        info = self.broker.account_info()
+        equity = float(info.get("equity", policy.env_params.initial_equity))
+
+        decision = policy.decide(
+            candles["close"].to_numpy(dtype=float),
+            position=posicion,
+            entry_price=float(getattr(self.broker, "entry_price", 0.0)),
+            equity=equity,
+        )
+
+        objetivo = decision.target_position
+        motivo = self._risk_veto(rp, now, equity)
+        if motivo is not None:
+            # Vetado: solo se permite lo que reduzca exposición.
+            if abs(objetivo) >= abs(posicion) and objetivo * posicion >= 0:
+                self.store.log("info", f"Decisión ignorada ({motivo}): {decision.side}")
+                return
+            self.store.log("warn", f"{motivo}: solo se permite reducir exposición")
+
+        if objetivo == posicion:
+            return
+
+        fill = self.broker.set_position(objetivo)
+        self.store.log(
+            "info",
+            f"FSRPPO {decision.side.upper()} {abs(fill['traded_units'])} → posición neta "
+            f"{objetivo} @ {fill['price']} (coste {fill['cost']:.2f})",
+        )
+        self.store.set_state("last_decision", decision.as_dict())
+
+    def _risk_veto(self, rp: RiskParams, now: datetime, equity: float) -> Optional[str]:
+        """Motivo por el que no se debe ampliar exposición, o ``None``."""
+        if not self.running:
+            return "bot pausado"
+        if self._halted_today():
+            return "bot detenido por hoy"
+        if not entry_allowed(now):
+            return "fuera de sesión permitida"
+
+        prices = self.broker.current_prices()
+        if not spread_ok(prices["bid"], prices["ask"], rp.max_spread_pips):
+            return f"spread {prices.get('spread_pips')} pips"
+
+        day_start = self.store.day_start_equity() or equity
+        if day_start > 0 and (equity - day_start) / day_start <= -rp.daily_loss_limit:
+            self.store.set_state(
+                "halted_until",
+                (now.date() + timedelta(days=1)).isoformat(),
+            )
+            self.store.log("error", "Límite de pérdida diaria alcanzado: bot en pausa hasta mañana")
+            return "límite de pérdida diaria"
+        return None
+
     # -- estado para la web -------------------------------------------------
 
     def status(self) -> dict:
@@ -396,5 +522,12 @@ class BotEngine:
             "max_trades_per_day": self.risk_params().max_trades_per_day,
             "open_trade": self.store.current_open_trade(),
             "stats": self.store.stats(),
-            "last_candle": self._last_processed.isoformat() if self._last_processed else None,
+            "last_candle": (
+                self._last_processed.isoformat()
+                if self._last_processed
+                else self.store.get_state("last_processed_boundary")
+            ),
+            "net_position": int(getattr(self.broker, "position", 0)),
+            "active_model": self._policy_run_id,
+            "last_decision": self.store.get_state("last_decision"),
         }

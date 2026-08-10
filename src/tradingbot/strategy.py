@@ -20,6 +20,9 @@ from .config import PIP, StrategyParams
 LONG = "long"
 SHORT = "short"
 
+# Estrategias basadas en reglas, las que sirven de referencia frente a FSRPPO.
+SIGNAL_STRATEGIES = frozenset({"bollinger", "rsi", "wyckoff_1"})
+
 
 @dataclass(frozen=True)
 class Signal:
@@ -80,7 +83,16 @@ def compute_signals(df: pd.DataFrame, p: StrategyParams) -> pd.Series:
     RSI: Largo si el RSI cruza hacia arriba de rsi_oversold.
     """
     d = df if "atr" in df.columns else add_indicators(df, p)
-    
+
+    # FSRPPO no genera señales por regla: decide con una política entrenada
+    # (ver rl/policy.py). Caer aquí significaría devolver señales de Bollinger
+    # etiquetadas como FSRPPO, así que se corta en seco.
+    if p.active_strategy not in SIGNAL_STRATEGIES:
+        raise ValueError(
+            f"{p.active_strategy!r} no genera señales por regla; "
+            f"estrategias con señal: {', '.join(sorted(SIGNAL_STRATEGIES))}"
+        )
+
     if p.active_strategy == "rsi":
         rsi = d["rsi"]
         prev_rsi = rsi.shift(1)

@@ -1,12 +1,14 @@
 [project]
 name = "tradingbot"
-version = "0.1.0"
-description = "Bot de trading EUR/USD — Bandas de Bollinger 15m sobre FXCM (ForexConnect)"
+version = "0.2.0"
+description = "Bot de trading EUR/USD — FSRPPO (PPO sobre representación de señal financiera) sobre FXCM (ForexConnect)"
 requires-python = ">=3.10,<3.11"
 dependencies = [
     "forexconnect==1.6.43",
     "numpy>=1.24,<2",
     "pandas>=2.0,<3",
+    "scipy>=1.11,<2",
+    "torch>=2.2,<3",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "python-dotenv>=1.0",

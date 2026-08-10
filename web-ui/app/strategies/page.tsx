@@ -2,7 +2,7 @@
 /* Estrategias de Trading (Configuración y Backtesting integrados por estrategia) */
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { getJSON, postJSON } from "@/lib/api";
+import { apiFetch, getJSON, postJSON } from "@/lib/api";
 import { AreaChart } from "@/components/charts";
 import { fmt, fmtPx, isoShort, sign } from "@/lib/format";
 import { useLive } from "@/lib/live";
@@ -211,7 +211,7 @@ export default function StrategiesPage() {
         setBtMsgs(prev => ({ ...prev, [stratKey]: { text: "Subiendo CSV…", cls: "" } }));
         const fd = new FormData();
         fd.append("file", s.file);
-        const up = await (await fetch("/api/backtest/csv", { method: "POST", body: fd })).json();
+        const up = await (await apiFetch("/api/backtest/csv", { method: "POST", body: fd })).json();
         if (!up.ok) {
           setBtMsgs(prev => ({ ...prev, [stratKey]: { text: "Error subiendo CSV: " + up.error, cls: "err" } }));
           setRunningStrategy(null);

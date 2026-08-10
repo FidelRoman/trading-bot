@@ -1,6 +1,6 @@
 "use client";
 
-import { postJSON } from "@/lib/api";
+import { clearApiToken, postJSON } from "@/lib/api";
 import { useLive } from "@/lib/live";
 import type { Status } from "@/lib/types";
 
@@ -12,6 +12,11 @@ export default function Topbar() {
   async function setRunning(run: boolean) {
     await postJSON<{ ok: boolean; status: Status }>(`/api/control/${run ? "resume" : "pause"}`);
     await refreshStatus();
+  }
+
+  function logout() {
+    clearApiToken();
+    window.location.reload();
   }
 
   return (
@@ -27,6 +32,9 @@ export default function Topbar() {
         </button>
         <button className="btn btn-stop" disabled={!isOn} onClick={() => setRunning(false)}>
           DETENER BOT
+        </button>
+        <button className="link-btn" onClick={logout} aria-label="Cerrar sesion del panel">
+          SALIR
         </button>
       </div>
     </header>

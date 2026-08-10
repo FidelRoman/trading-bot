@@ -1,9 +1,11 @@
-const BACKEND = process.env.BACKEND_URL ?? "http://localhost:8000";
+const BACKEND = (process.env.BACKEND_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   async rewrites() {
-    return [{ source: "/api/:path*", destination: `${BACKEND}/api/:path*` }];
+    return process.env.BACKEND_URL
+      ? [{ source: "/api/:path*", destination: `${BACKEND}/api/:path*` }]
+      : [];
   },
 };
 

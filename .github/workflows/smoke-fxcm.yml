@@ -1,0 +1,33 @@
+name: Smoke FXCM Linux
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    container: python:3.7-slim
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install legacy Linux SDK
+        run: |
+          python -m pip install "pip<24.1"
+          python -m pip install "forexconnect==1.6.5.1" "pandas<2" "numpy<1.22"
+      - name: Connect and download 10 candles
+        env:
+          FXCM_USER: ${{ secrets.FXCM_USER }}
+          FXCM_PASS: ${{ secrets.FXCM_PASS }}
+          FXCM_CONNECTION: Demo
+        run: >-
+          python scripts/download_history.py
+          --symbols "EUR/USD"
+          --timeframes h1
+          --years 1
+          --count 10
+          --output-dir /tmp/fxcm-smoke
+      - name: Verify smoke output
+        run: test "$(find /tmp/fxcm-smoke -name '*.csv' | wc -l)" -eq 1

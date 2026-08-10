@@ -7,7 +7,9 @@ from tradingbot.backtest import run_backtest, synthetic_df
 from tradingbot.config import PIP, RiskParams, StrategyParams
 from tradingbot.strategy import add_indicators, size_position
 
-P = StrategyParams()
+# Estos tests cubren las estrategias por regla que sirven de referencia;
+# la estrategia por defecto del bot es FSRPPO, que no genera señales así.
+P = StrategyParams(active_strategy="bollinger")
 R = RiskParams(risk_per_trade=0.005, daily_loss_limit=0.03, max_trades_per_day=4,
                max_spread_pips=1.5, min_lot=1000)
 EQ0 = 10_000.0

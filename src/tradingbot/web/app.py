@@ -7,10 +7,12 @@ poder ver el dashboard y probar el pipeline sin cuenta.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import os
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 
 from fastapi import Body, FastAPI, UploadFile, WebSocket, WebSocketDisconnect
@@ -19,22 +21,33 @@ from fastapi.staticfiles import StaticFiles
 
 from ..config import load_settings
 from ..engine import BotEngine
-from ..store import Store
+from ..store import create_store
 from ..strategy import add_indicators
 from .backtest_job import UPLOAD_CSV, BacktestJob
+from .auth import BearerAuthMiddleware, allowed_origins
+from .training_job import TrainingJob
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
 
+# Python 3.7 no trae asyncio.to_thread. La imagen del bot usa 3.7 porque es la
+# unica version Linux para la que forexconnect publica wheel x86_64.
+if not hasattr(asyncio, "to_thread"):
+    async def _to_thread(function, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, functools.partial(function, *args, **kwargs))
+
+    asyncio.to_thread = _to_thread
+
 
 class WsHub:
     def __init__(self) -> None:
         self._clients: set[WebSocket] = set()
 
-    async def add(self, ws: WebSocket) -> None:
-        await ws.accept()
+    async def add(self, ws: WebSocket, subprotocol: str | None = None) -> None:
+        await ws.accept(subprotocol=subprotocol)
         self._clients.add(ws)
 
     def remove(self, ws: WebSocket) -> None:
@@ -56,22 +69,38 @@ class WsHub:
         return bool(self._clients)
 
 
-def _make_broker(settings):
-    if os.getenv("MOCK") == "1" or not settings.fxcm.user:
-        from ..mock import MockBroker
+def _make_broker(settings, store=None):
+    """Bróker según el entorno.
 
-        log.warning("Sin credenciales FXCM (o MOCK=1): usando bróker SIMULADO")
-        return MockBroker()
+    FSRPPO gestiona una posición neta, no operaciones con SL/TP, así que en modo
+    paper se envuelve la fuente de precios en un ``PaperBroker``: el mercado es
+    el real de FXCM y lo simulado es únicamente la ejecución. Es el alcance
+    acordado para esta versión — no se envían órdenes reales.
+    """
+    from ..paper_broker import PaperBroker
+
+    if os.getenv("MOCK") == "1" or not settings.fxcm.user:
+        log.warning("Sin credenciales FXCM (o MOCK=1): precios SIMULADOS, ejecución en papel")
+        return PaperBroker(
+            persisted_state=store.get_state("paper_broker", {}) if store else {},
+            state_callback=(lambda value: store.set_state("paper_broker", value)) if store else None,
+        )
+
     from ..broker import FxcmBroker
 
-    return FxcmBroker(settings.fxcm)
+    log.info("Precios reales de FXCM con ejecución en papel (no se envían órdenes)")
+    return PaperBroker(
+        price_source=FxcmBroker(settings.fxcm),
+        persisted_state=store.get_state("paper_broker", {}) if store else {},
+        state_callback=(lambda value: store.set_state("paper_broker", value)) if store else None,
+    )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = load_settings()
-    store = Store(settings.db_path)
-    broker = _make_broker(settings)
+    store = create_store(settings.db_path)
+    broker = _make_broker(settings, store)
     engine = BotEngine(broker, store, settings)
     hub = WsHub()
 
@@ -86,7 +115,16 @@ async def lifespan(app: FastAPI):
     app.state.hub = hub
     app.state.backtest = BacktestJob(store, engine, broker)
 
-    engine_task = asyncio.create_task(engine.run())
+    bucle = asyncio.get_running_loop()
+
+    def notificar(payload: dict) -> None:
+        # El job corre en un hilo: hay que volver al bucle de eventos para emitir.
+        asyncio.run_coroutine_threadsafe(hub.broadcast(payload), bucle)
+
+    app.state.training = TrainingJob(store, notify=notificar)
+
+    scheduled_mode = os.getenv("EXECUTION_MODE", "continuous").lower() == "scheduled"
+    engine_task = None if scheduled_mode else asyncio.create_task(engine.run())
 
     async def price_pump() -> None:
         while True:
@@ -116,8 +154,11 @@ async def lifespan(app: FastAPI):
     finally:
         engine.stop()
         pump_task.cancel()
-        engine_task.cancel()
-        await asyncio.gather(engine_task, pump_task, return_exceptions=True)
+        tasks = [pump_task]
+        if engine_task is not None:
+            engine_task.cancel()
+            tasks.append(engine_task)
+        await asyncio.gather(*tasks, return_exceptions=True)
         await asyncio.to_thread(app.state.broker.disconnect)
 
 
@@ -126,9 +167,10 @@ app = FastAPI(title="EUR/USD Bollinger Bot", lifespan=lifespan)
 # El frontend Next.js corre en otro puerto en desarrollo (localhost únicamente)
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
+app.add_middleware(BearerAuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=allowed_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -137,6 +179,11 @@ app.add_middleware(
 @app.get("/")
 async def index():
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"ok": True, "execution_mode": os.getenv("EXECUTION_MODE", "continuous")}
 
 
 @app.get("/api/status")
@@ -337,12 +384,12 @@ async def set_credentials(payload: dict = Body(...)):
 
     # Recargar configuración y re-crear store para el nuevo modo si cambió
     from ..config import load_settings
-    from ..store import Store
+    from ..store import create_store
 
     new_settings = load_settings()
     if str(app.state.store.path) != str(new_settings.db_path):
         old_store = app.state.store
-        new_store = Store(new_settings.db_path)
+        new_store = create_store(new_settings.db_path)
         
         # Swap store references
         app.state.store = new_store
@@ -397,7 +444,6 @@ BACKTEST_TF = {"m5", "m15", "m30", "h1", "h4", "d1"}
 
 @app.post("/api/backtest")
 async def backtest_start(payload: dict = Body(...)):
-    print(f"DEBUG BACKTEST PAYLOAD: {payload}")
     from datetime import datetime, timedelta, timezone
 
     job: BacktestJob = app.state.backtest
@@ -490,10 +536,278 @@ async def backtest_upload(file: UploadFile):
     return {"ok": True, "filename": file.filename, "kb": len(data) // 1024}
 
 
+# -- FSRPPO: representación, entrenamiento y modelos -------------------------
+
+
+def _fsr_params(payload: dict):
+    """FsrParams con solo los campos que la interfaz puede tocar."""
+    from ..config import FsrParams
+
+    base = FsrParams()
+    permitidos = {"window", "ensemble_size", "noise_scale", "n_curves",
+                  "hurst_threshold", "patience", "max_imfs"}
+    valores = {k: v for k, v in payload.items() if k in permitidos and v is not None}
+    return replace(base, **valores)
+
+
+def _training_available() -> bool:
+    """La imagen minima sirve inferencia y precalculo, pero no entrenamiento."""
+    from importlib.util import find_spec
+
+    return find_spec("torch") is not None
+
+
+@app.get("/api/fsr")
+async def fsr_preview(bars: int = 50, timeframe: str = "h1"):
+    """Descomposición de la última ventana: IMFs, Hurst y señal reconstruida.
+
+    Es lo que alimenta el visor: deja ver qué se descarta como ruido y por qué.
+    """
+    from ..config import FsrParams
+    from ..fsr.represent import fsr_window
+
+    params = FsrParams()
+    candles = await asyncio.to_thread(
+        app.state.broker.get_candles, max(params.window, bars), None, None, timeframe
+    )
+    if candles.empty or len(candles) < params.window:
+        return {"ok": False, "error": "Histórico insuficiente para calcular FSR"}
+
+    closes = candles["close"].to_numpy(dtype=float)[-params.window:]
+    resultado = await asyncio.to_thread(fsr_window, closes, params)
+
+    return {
+        "ok": True,
+        "window": params.window,
+        "times": [str(t) for t in candles.index[-params.window:]],
+        "prices": [round(float(p), 5) for p in closes],
+        "signal": [round(float(v), 5) for v in resultado.signal],
+        "imfs": [[round(float(v), 6) for v in imf] for imf in resultado.imfs],
+        "hursts": [round(float(h), 3) for h in resultado.hursts],
+        "kept": [bool(k) for k in resultado.kept],
+        "discarded_energy": round(resultado.discarded_energy, 4),
+    }
+
+
+@app.get("/api/training")
+async def training_state():
+    return app.state.training.state()
+
+
+@app.get("/api/training/datasets")
+async def training_datasets():
+    return {"datasets": TrainingJob.available_datasets()}
+
+
+@app.post("/api/training/precompute")
+async def training_precompute(payload: dict = Body(...)):
+    job: TrainingJob = app.state.training
+    started = job.start_precompute(
+        csv_name=payload.get("dataset"),
+        timeframe=str(payload.get("timeframe", "h1")).lower(),
+        params=_fsr_params(payload),
+    )
+    return {"ok": started, "error": None if started else "Ya hay un trabajo en curso"}
+
+
+@app.post("/api/training")
+async def training_start(payload: dict = Body(...)):
+    if not _training_available():
+        return {
+            "ok": False,
+            "error": "Entrenamiento no disponible en la imagen del bot; usa el entorno completo",
+        }
+    from ..config import PpoParams, get_instrument_spec
+    from ..rl.env import EnvParams
+
+    job: TrainingJob = app.state.training
+    ppo = replace(
+        PpoParams(),
+        iterations=int(max(1, min(int(payload.get("iterations", 200)), 2000))),
+        seed=int(payload.get("seed", 0)),
+        learning_rate=float(payload.get("learning_rate", PpoParams.learning_rate)),
+        entropy_coef=float(payload.get("entropy_coef", PpoParams.entropy_coef)),
+    )
+    try:
+        instrument = get_instrument_spec(str(payload.get("instrument", "EUR/USD")))
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    spread = payload.get("spread_pips")
+    default_max_units = 20_000 if instrument.min_lot >= 1_000 else 5
+    max_units = int(payload.get("max_units", default_max_units))
+    env = replace(
+        EnvParams(),
+        instrument=instrument,
+        max_units=max(instrument.min_lot, min(max_units, 1_000_000)),
+        spread_pips=(
+            None if spread is None
+            else float(max(0.0, min(float(spread), 1_000.0)))
+        ),
+    )
+
+    started = job.start_training(
+        csv_name=payload.get("dataset"),
+        timeframe=str(payload.get("timeframe", "h1")).lower(),
+        train_end=payload.get("train_end"),
+        fsr=_fsr_params(payload),
+        ppo=ppo,
+        env=env,
+        instrument=instrument.symbol,
+        activate=bool(payload.get("activate", False)),
+    )
+    return {"ok": started, "error": None if started else "Ya hay un trabajo en curso"}
+
+
+@app.post("/api/fsrppo/compare")
+async def fsrppo_compare(payload: dict = Body(...)):
+    """Compara el modelo indicado contra Buy & Hold y las estrategias por regla.
+
+    Se evalúa sobre el **tramo de test** del modelo, que es el único que no vio
+    durante el entrenamiento.
+    """
+    if not _training_available():
+        return {
+            "ok": False,
+            "error": "Comparativa no disponible en la imagen del bot; usa el entorno completo",
+        }
+
+    from ..config import FsrParams
+    from ..rl.dataset import build_dataset
+    from ..rl.env import EnvParams
+    from ..rl.policy import FsrppoPolicy
+    from ..rl.registry import ModelRegistry
+    from ..rl.train import compare_with_benchmarks
+    from .training_job import TrainingJob
+
+    registro = ModelRegistry()
+    run_id = payload.get("run_id") or registro.active_id()
+    if not run_id:
+        return {"ok": False, "error": "No hay modelo indicado ni activo"}
+
+    record = registro.get(run_id)
+    if record is None:
+        return {"ok": False, "error": f"No existe el modelo {run_id}"}
+
+    job: TrainingJob = app.state.training
+
+    def ejecutar() -> list[dict]:
+        candles = job._load_candles(payload.get("dataset"), record.timeframe)
+        dataset = build_dataset(candles, FsrParams(**record.fsr_params))
+        _entrena, evalua = dataset.split(record.test_range[0])
+        politica = FsrppoPolicy.from_record(registro, run_id)
+        return compare_with_benchmarks(
+            politica.agent, evalua, candles,
+            EnvParams(**record.env_params), record.timeframe,
+        )
+
+    try:
+        filas = await asyncio.to_thread(ejecutar)
+    except Exception as exc:
+        log.exception("comparativa FSRPPO")
+        return {"ok": False, "error": str(exc)}
+
+    return {"ok": True, "run_id": run_id, "test_range": record.test_range, "rows": filas}
+
+
+@app.get("/api/models")
+async def models_list():
+    from ..rl.registry import ModelRegistry
+
+    registro = ModelRegistry()
+    activo = registro.active_id()
+    return {
+        "active": activo,
+        "models": [
+            {**registro_modelo.as_dict(), "is_active": registro_modelo.run_id == activo}
+            for registro_modelo in registro.list()
+        ],
+    }
+
+
+@app.get("/api/instruments")
+async def instruments_list():
+    from ..config import INSTRUMENTS
+
+    return {
+        "instruments": [
+            {
+                "symbol": spec.symbol,
+                "pip": spec.pip,
+                "min_lot": spec.min_lot,
+                "typical_spread_pips": spec.typical_spread_pips,
+                "quote_currency": spec.quote_currency,
+            }
+            for spec in INSTRUMENTS.values()
+        ]
+    }
+
+
+@app.get("/api/selection/latest")
+async def selection_latest():
+    """Último barrido auditable; las pérdidas también forman parte del ranking."""
+    from ..config import PROJECT_ROOT
+
+    selection_dir = PROJECT_ROOT / "data" / "selection"
+    files = sorted(selection_dir.glob("*.json"), reverse=True) if selection_dir.exists() else []
+    if not files:
+        return {"ok": False, "error": "Todavía no hay barridos de selección"}
+    try:
+        return {"ok": True, "filename": files[0].name, **json.loads(files[0].read_text())}
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"ok": False, "error": f"No se pudo leer {files[0].name}: {exc}"}
+
+
+@app.get("/api/models/{run_id}/history")
+async def model_history(run_id: str):
+    from ..rl.registry import ModelRegistry
+
+    return {"run_id": run_id, "history": ModelRegistry().history(run_id)}
+
+
+@app.post("/api/models/{run_id}/activate")
+async def model_activate(run_id: str):
+    from ..rl.registry import ModelRegistry
+
+    try:
+        ModelRegistry().activate(run_id)
+    except FileNotFoundError as exc:
+        return {"ok": False, "error": str(exc)}
+    app.state.store.log("info", f"Modelo activo: {run_id}")
+    return {"ok": True, "active": run_id}
+
+
+@app.post("/api/models/deactivate")
+async def model_deactivate():
+    from ..rl.registry import ModelRegistry
+
+    ModelRegistry().deactivate()
+    app.state.store.log("warn", "Sin modelo activo: FSRPPO no operará")
+    return {"ok": True, "active": None}
+
+
+@app.post("/api/scheduled/tick")
+async def scheduled_tick():
+    """Evaluacion idempotente invocada por el scheduler gratuito."""
+    if os.getenv("EXECUTION_MODE", "continuous").lower() != "scheduled":
+        return {"ok": False, "error": "el backend no esta en modo scheduled"}
+    result = await app.state.engine.run_once()
+    return {"ok": True, **result}
+
+
+@app.delete("/api/models/{run_id}")
+async def model_delete(run_id: str):
+    from ..rl.registry import ModelRegistry
+
+    ModelRegistry().delete(run_id)
+    return {"ok": True}
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     hub: WsHub = app.state.hub
-    await hub.add(ws)
+    selected = "bearer" if "bearer" in ws.scope.get("subprotocols", []) else None
+    await hub.add(ws, subprotocol=selected)
     try:
         await ws.send_text(json.dumps({"type": "status", "status": app.state.engine.status()}, default=str))
         while True:

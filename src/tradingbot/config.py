@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -11,14 +11,63 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
 
 INSTRUMENT = "EUR/USD"
-TIMEFRAME = "m15"
-PIP = 0.0001
+TIMEFRAME = "h1"
+
+
+@dataclass(frozen=True)
+class InstrumentSpec:
+    """Contrato de mercado usado por sizing, costes y entrenamiento."""
+
+    symbol: str
+    pip: float
+    min_lot: int
+    typical_spread_pips: float
+    quote_currency: str = "USD"
+
+    def __post_init__(self) -> None:
+        if self.pip <= 0:
+            raise ValueError("pip debe ser positivo")
+        if self.min_lot <= 0:
+            raise ValueError("min_lot debe ser positivo")
+        if self.typical_spread_pips < 0:
+            raise ValueError("typical_spread_pips no puede ser negativo")
+
+
+INSTRUMENTS: dict[str, InstrumentSpec] = {
+    "EUR/USD": InstrumentSpec("EUR/USD", pip=0.0001, min_lot=1_000,
+                              typical_spread_pips=1.2),
+    "GBP/USD": InstrumentSpec("GBP/USD", pip=0.0001, min_lot=1_000,
+                              typical_spread_pips=1.5),
+    "USD/JPY": InstrumentSpec("USD/JPY", pip=0.01, min_lot=1_000,
+                              typical_spread_pips=1.2, quote_currency="JPY"),
+    # FXCM permite dimensionar el oro en unidades, no en micro-lotes de 1.000.
+    "XAU/USD": InstrumentSpec("XAU/USD", pip=0.01, min_lot=1,
+                              typical_spread_pips=35.0),
+}
+
+
+def get_instrument_spec(symbol: str) -> InstrumentSpec:
+    """Devuelve una especificación aceptando mayúsculas/minúsculas y ``EURUSD``."""
+    normalizado = symbol.strip().upper()
+    if "/" not in normalizado and len(normalizado) == 6:
+        normalizado = f"{normalizado[:3]}/{normalizado[3:]}"
+    try:
+        return INSTRUMENTS[normalizado]
+    except KeyError as exc:
+        disponibles = ", ".join(INSTRUMENTS)
+        raise ValueError(f"instrumento desconocido {symbol!r}; disponibles: {disponibles}") from exc
+
+
+# Compatibilidad para las estrategias históricas. FSRPPO usa InstrumentSpec.
+PIP = INSTRUMENTS[INSTRUMENT].pip
 
 
 @dataclass(frozen=True)
 class StrategyParams:
-    active_strategy: str = "bollinger"
-    timeframe: str = "m15"
+    # Bollinger, RSI y Wyckoff se conservan como referencias contra las que medir
+    # FSRPPO en la pestaña de backtesting; la estrategia del bot es FSRPPO.
+    active_strategy: str = "fsrppo"
+    timeframe: str = "h1"
     bb_period: int = 20
     bb_std: float = 2.0
     atr_period: int = 14
@@ -35,6 +84,74 @@ class StrategyParams:
     wyckoff_volume_mult: float = 1.5
     wyckoff_tp_mult: float = 2.0
 
+
+
+@dataclass(frozen=True)
+class FsrParams:
+    """Representación de la señal financiera (§2.1 del paper).
+
+    Los valores por defecto son los del paper salvo donde se indica. ``window``
+    es ``M`` (50 cierres), ``ensemble_size`` es ``J`` y ``noise_scale`` es ``ξ``
+    (el paper no publica ninguno de los dos), ``n_curves`` es ``C``, ``delta``
+    es ``δ``, ``max_iter`` es ``D`` y ``phi`` es ``Φ``.
+    """
+
+    window: int = 50
+    ensemble_size: int = 20
+    noise_scale: float = 0.2
+    n_curves: int = 2
+    delta: float = 0.001
+    # δ relativo al rango de la ventana: el δ absoluto del paper está calibrado
+    # para precios de acciones, no para divisas. Ver fsr/esmd.py.
+    delta_mode: str = "range"
+    max_iter: int = 100
+    # None = las D=100 pasadas de tamizado del paper (devolviendo siempre el mejor
+    # iterado, ver fsr/esmd.py). Bajarlo a 8 acelera ~4x el precálculo a costa de
+    # cambiar las features: es un hiperparámetro, no un ajuste cosmético.
+    patience: int | None = None
+    phi: int = 6
+    max_imfs: int = 12
+    hurst_threshold: float = 0.5
+    hurst_v_min: int = 2
+    # Entrega los rendimientos relativos al último cierre en vez del nivel de
+    # precio: sin esto la política no generaliza del tramo de train al de test.
+    normalize: bool = True
+    seed: int = 0
+
+    def cache_key(self) -> str:
+        """Huella estable de los parámetros, para invalidar la caché de FSR."""
+        import hashlib
+        import json
+
+        payload = json.dumps(asdict(self), sort_keys=True)
+        return hashlib.sha1(payload.encode()).hexdigest()[:16]
+
+
+@dataclass(frozen=True)
+class PpoParams:
+    """Hiperparámetros de PPO (§2.4.2 y Algoritmo 1 del paper).
+
+    ``iterations`` es ``NI``, ``episodes_per_iteration`` es ``NE`` y
+    ``steps_per_episode`` es ``T``.
+    """
+
+    gamma: float = 0.99
+    gae_lambda: float = 1.0          # λ del paper
+    clip_epsilon: float = 0.2        # ε
+    entropy_coef: float = 0.01       # c
+    learning_rate: float = 1e-5
+    hidden_sizes: tuple[int, ...] = (256, 256)
+    iterations: int = 200
+    episodes_per_iteration: int = 8
+    steps_per_episode: int = 256
+    # El Algoritmo 1 hace una sola actualización por iteración, pero entonces el
+    # cociente π_nueva/π_vieja vale exactamente 1 y el recorte de PPO nunca actúa:
+    # se degradaría a gradiente de política a secas. Varias épocas sobre el lote
+    # es lo que hace que PPO sea PPO.
+    update_epochs: int = 10
+    minibatch_size: int = 256
+    max_grad_norm: float = 0.5
+    seed: int = 0
 
 
 @dataclass(frozen=True)

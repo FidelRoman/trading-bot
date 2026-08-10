@@ -13,6 +13,7 @@ from pathlib import Path
 
 from ..backtest import download_history, load_csv, run_backtest, synthetic_df
 from ..config import PROJECT_ROOT, RiskParams, StrategyParams
+from ..strategy import SIGNAL_STRATEGIES
 
 log = logging.getLogger(__name__)
 
@@ -86,6 +87,11 @@ class BacktestJob:
             sp, rp = self.engine.strategy_params(), self.engine.risk_params()
             if strategy:
                 sp = replace(sp, active_strategy=strategy)
+            if sp.active_strategy not in SIGNAL_STRATEGIES:
+                # Este backtester recorre señales por regla. FSRPPO se evalúa con
+                # su propio simulador (rl/train.py::replay), que es el mismo con
+                # el que entrena. El resultado indica qué estrategia se corrió.
+                sp = replace(sp, active_strategy="bollinger")
             if strategy_params:
                 updates = {}
                 for k, v in strategy_params.items():

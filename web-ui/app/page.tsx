@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { SeriesMarker, Time } from "lightweight-charts";
 import { CandleChart } from "@/components/charts";
+import FsrppoPanel from "@/components/FsrppoPanel";
 import LogsPanel from "@/components/LogsPanel";
 import PositionsPanel from "@/components/PositionsPanel";
 import StrategyControls from "@/components/StrategyControls";
@@ -90,6 +91,7 @@ export default function Dashboard() {
           </div>
         </div>
         <StrategyControls />
+        <FsrppoPanel />
       </div>
       <div className="col-side">
         <div className="card" style={{ marginBottom: "16px", padding: "16px" }}>

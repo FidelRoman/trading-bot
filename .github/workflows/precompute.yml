@@ -1,0 +1,132 @@
+name: Precompute FSR
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: Comma-separated symbols already present in the Release
+        required: true
+        default: EUR/USD,XAU/USD,GBP/USD
+        type: string
+      timeframes:
+        description: Comma-separated timeframes
+        required: true
+        default: h4,d1
+        type: string
+      release_tag:
+        description: Source Release tag; blank uses the latest Release
+        required: false
+        default: ""
+        type: string
+      patience:
+        description: Optional FSR early-stopping patience; blank uses the paper value
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      symbols: ${{ steps.matrix.outputs.symbols }}
+      timeframes: ${{ steps.matrix.outputs.timeframes }}
+      release_tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - name: Build matrix
+        id: matrix
+        env:
+          SYMBOLS: ${{ inputs.symbols }}
+          TIMEFRAMES: ${{ inputs.timeframes }}
+        run: |
+          echo "symbols=$(python3 -c 'import json,os; print(json.dumps([x.strip() for x in os.environ["SYMBOLS"].split(",") if x.strip()]))')" >> "$GITHUB_OUTPUT"
+          echo "timeframes=$(python3 -c 'import json,os; print(json.dumps([x.strip().lower() for x in os.environ["TIMEFRAMES"].split(",") if x.strip()]))')" >> "$GITHUB_OUTPUT"
+      - name: Resolve release tag
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+        run: |
+          if [ -n "$REQUESTED_TAG" ]; then
+            tag="$REQUESTED_TAG"
+          else
+            tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  precompute:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        symbol: ${{ fromJSON(needs.prepare.outputs.symbols) }}
+        timeframe: ${{ fromJSON(needs.prepare.outputs.timeframes) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install compute dependencies
+        run: python -m pip install "numpy<2" "pandas<3" "scipy<2" "python-dotenv<2"
+      - name: Fetch verified history
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python scripts/fetch_cache.py
+          --repo "$GITHUB_REPOSITORY"
+          --tag "${{ needs.prepare.outputs.release_tag }}"
+          --symbols "${{ matrix.symbol }}"
+          --timeframes "${{ matrix.timeframe }}"
+          --history-only
+      - name: Restore incremental FSR cache
+        uses: actions/cache@v4
+        with:
+          path: data/fsr_cache
+          key: fsr-${{ runner.os }}-${{ matrix.symbol }}-${{ matrix.timeframe }}-${{ hashFiles('data/history/*.csv') }}
+      - name: Precompute features
+        env:
+          PATIENCE: ${{ inputs.patience }}
+        run: |
+          csv="$(find data/history -name '*.csv' -print -quit)"
+          args=(--csv "$csv" -j "$(nproc)")
+          if [ -n "$PATIENCE" ]; then args+=(--patience "$PATIENCE"); fi
+          python scripts/precompute_fsr.py "${args[@]}"
+      - name: Package market cache
+        env:
+          SYMBOL: ${{ matrix.symbol }}
+          TIMEFRAME: ${{ matrix.timeframe }}
+        run: |
+          slug="$(printf '%s' "$SYMBOL" | tr -d '/' | tr '[:upper:]' '[:lower:]')"
+          source="$(find data/fsr_cache -maxdepth 1 -name 'fsr_*.npz' -print -quit)"
+          hash="$(basename "$source" .npz | sed 's/^fsr_//')"
+          mkdir -p release-assets
+          asset="release-assets/fsr_${slug}_${TIMEFRAME}_${hash}.npz"
+          cp "$source" "$asset"
+          sha256sum "$asset" > "$asset.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fsr-${{ strategy.job-index }}
+          path: release-assets/
+          if-no-files-found: error
+
+  publish:
+    needs: [prepare, precompute]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: fsr-*
+          path: release-assets
+          merge-multiple: true
+      - name: Publish cache assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.release_tag }}
+          files: release-assets/*
+          fail_on_unmatched_files: true
+          overwrite_files: true

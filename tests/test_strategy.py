@@ -16,7 +16,9 @@ from tradingbot.strategy import (
     spread_ok,
 )
 
-P = StrategyParams()
+# Estos tests cubren las estrategias por regla que sirven de referencia;
+# la estrategia por defecto del bot es FSRPPO, que no genera señales así.
+P = StrategyParams(active_strategy="bollinger")
 
 
 def make_df(closes: list[float], volumes: list[float] | None = None) -> pd.DataFrame:
@@ -137,3 +139,15 @@ def test_wyckoff_no_signal_low_volume():
     df = make_df(closes, volumes)
     sigs = compute_signals(df, p)
     assert sigs.iloc[-1] is np.nan
+
+
+def test_fsrppo_no_genera_senales_por_regla():
+    """Sin esta guarda, un backtest de FSRPPO devolvería señales de Bollinger.
+
+    FSRPPO decide con una política entrenada (rl/policy.py), no con una regla
+    sobre indicadores, así que pedirle señales tiene que fallar en vez de caer
+    silenciosamente en la rama por defecto.
+    """
+    df = make_df([1.10 + 0.0001 * i for i in range(60)])
+    with pytest.raises(ValueError, match="no genera señales"):
+        compute_signals(df, StrategyParams(active_strategy="fsrppo"))
