@@ -165,18 +165,27 @@ async def run():
         broker.connect()
         commands = _process_commands(store, engine, broker, connection)
         result = await engine.run_once()
+        try:
+            prices = broker.current_prices()
+        except Exception as exc:
+            prices = None
+            store.log("warn", "Precios no disponibles para snapshot: {}".format(exc))
+        candles = {}
+        for timeframe in ("m5", "m15", "h1", "h4"):
+            try:
+                candles[timeframe] = _candles_payload(broker, engine, timeframe)
+            except Exception as exc:
+                candles[timeframe] = {"candles": [], "bands": []}
+                store.log("warn", "Velas {} no disponibles: {}".format(timeframe, exc))
         snapshot = {
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "connection": connection,
             "tick": result,
             "commands": commands,
             "status": engine.status(),
-            "prices": broker.current_prices(),
+            "prices": prices,
             "positions": broker.open_trades(),
-            "candles": {
-                timeframe: _candles_payload(broker, engine, timeframe)
-                for timeframe in ("m5", "m15", "h1", "h4")
-            },
+            "candles": candles,
         }
         store.set_state("runtime_snapshot", snapshot)
         print({"connection": connection, "tick": result, "commands": commands})
