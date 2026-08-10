@@ -7,6 +7,7 @@ sobrevivir reinicios.
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 import logging
 import time as _time
 from datetime import datetime, timedelta, timezone
@@ -50,6 +51,12 @@ TF_SECONDS = {
 
 GRACE_SECONDS = 10          # margen tras el cierre de vela antes de pedir histórico
 FAST_TICK_SECONDS = 5       # cadencia de vigilancia de posición/equity
+
+
+async def _to_thread(function, *args):
+    """Compatibilidad con Python 3.7, anterior a ``asyncio.to_thread``."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, partial(function, *args))
 
 
 def last_closed_boundary(now: datetime, timeframe: str = "m15") -> datetime:
@@ -212,8 +219,8 @@ class BotEngine:
         self.store.log("info", "Engine iniciado")
         while not self._stop:
             try:
-                await asyncio.to_thread(self._ensure_connected)
-                await asyncio.to_thread(self._watch_position)
+                await _to_thread(self._ensure_connected)
+                await _to_thread(self._watch_position)
                 self._maybe_snapshot_equity()
                 now = datetime.now(timezone.utc)
                 sp = self.strategy_params()
@@ -222,7 +229,7 @@ class BotEngine:
                 boundary = last_closed_boundary(now, tf)
                 due = (now - boundary).total_seconds() >= seconds + GRACE_SECONDS
                 if due and self._last_processed != boundary:
-                    await asyncio.to_thread(self._candle_tick, boundary)
+                    await _to_thread(self._candle_tick, boundary)
                     self._last_processed = boundary
                     await self._emit("candle", {"boundary": boundary.isoformat()})
             except Exception:
@@ -245,10 +252,10 @@ class BotEngine:
             if persisted == boundary.isoformat():
                 return {"processed": False, "reason": "already_processed", "boundary": persisted}
 
-            await asyncio.to_thread(self._ensure_connected)
-            await asyncio.to_thread(self._watch_position)
-            await asyncio.to_thread(self._maybe_snapshot_equity)
-            await asyncio.to_thread(self._candle_tick, boundary)
+            await _to_thread(self._ensure_connected)
+            await _to_thread(self._watch_position)
+            await _to_thread(self._maybe_snapshot_equity)
+            await _to_thread(self._candle_tick, boundary)
             value = boundary.isoformat()
             self._last_processed = boundary
             self.store.set_state("last_processed_boundary", value)
