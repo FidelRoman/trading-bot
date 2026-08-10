@@ -20,9 +20,11 @@ log = logging.getLogger(__name__)
 
 
 class FxcmBroker:
-    def __init__(self, creds: FxcmCredentials, instrument: str = INSTRUMENT):
+    def __init__(self, creds: FxcmCredentials, instrument: str = INSTRUMENT,
+                 read_only: bool = False):
         self._creds = creds
         self.instrument = instrument
+        self.read_only = read_only
         self._fx: Optional[ForexConnect] = None
         self._lock = threading.RLock()
         self._account_id: Optional[str] = None
@@ -197,6 +199,10 @@ class FxcmBroker:
     def normalize_units(self, units: int) -> int:
         return (units // self._base_unit_size) * self._base_unit_size
 
+    def _assert_trading_enabled(self) -> None:
+        if self.read_only:
+            raise PermissionError("La sesion FXCM es de solo lectura; las ordenes estan bloqueadas")
+
     def open_position(
         self, side: str, units: int, stop_pips: float, take_profit: float
     ) -> str:
@@ -205,6 +211,7 @@ class FxcmBroker:
         El SL pegado (FROM_OPEN) evita adivinar el precio de fill: FXCM lo
         coloca a ``stop_pips`` del precio real de apertura del trade.
         """
+        self._assert_trading_enabled()
         units = self.normalize_units(units)
         if units <= 0:
             raise ValueError("units debe ser >= base_unit_size")
@@ -234,12 +241,14 @@ class FxcmBroker:
 
     def open_position_pips(self, side: str, units: int, sl_pips: float, tp_pips: float) -> str:
         """Orden a mercado con SL y TP expresados en pips (para órdenes manuales)."""
+        self._assert_trading_enabled()
         prices = self.current_prices()
         ref = prices["ask"] if side == "long" else prices["bid"]
         tp = ref + tp_pips * PIP if side == "long" else ref - tp_pips * PIP
         return self.open_position(side, units, sl_pips, tp)
 
     def close_trade(self, trade_id: str) -> str:
+        self._assert_trading_enabled()
         with self._lock:
             fx = self._fx_or_raise()
             # Nota: Common.get_trade busca por offer_id, no por trade_id

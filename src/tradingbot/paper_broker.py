@@ -4,8 +4,8 @@ FSRPPO no abre operaciones con SL/TP: gestiona una **posición neta** que ajusta
 en cada barra. Este bróker expone esa semántica (`set_position`) sobre la misma
 interfaz que usa el resto del bot, ejecutando contra un libro simulado.
 
-Si se le pasa un ``price_source`` (por ejemplo el ``FxcmBroker`` conectado a la
-cuenta demo), los precios y el histórico son **reales** y lo único simulado es
+Si se le pasa un ``price_source`` (por ejemplo el ``FxcmBroker`` conectado en
+solo lectura), los precios y el histórico son **reales** y lo único simulado es
 la ejecución. Es la forma honesta de hacer paper trading: el mercado es el de
 verdad, el dinero no.
 """

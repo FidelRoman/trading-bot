@@ -28,7 +28,7 @@ jobs:
         env:
           FXCM_USER: ${{ secrets.FXCM_USER }}
           FXCM_PASS: ${{ secrets.FXCM_PASS }}
-          FXCM_CONNECTION: Demo
+          FXCM_CONNECTION: Real
           FIRESTORE_PROJECT_ID: trading-bot-free-20260809
           FIRESTORE_COLLECTION_PREFIX: tradingbot
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}

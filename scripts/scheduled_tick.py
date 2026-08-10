@@ -19,7 +19,7 @@ def _broker(settings, store):
     from tradingbot.broker import FxcmBroker
 
     return PaperBroker(
-        price_source=FxcmBroker(settings.fxcm),
+        price_source=FxcmBroker(settings.fxcm, read_only=True),
         persisted_state=store.get_state("paper_broker", {}),
         state_callback=lambda value: store.set_state("paper_broker", value),
     )

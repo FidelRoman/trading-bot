@@ -22,7 +22,7 @@ jobs:
         env:
           FXCM_USER: ${{ secrets.FXCM_USER }}
           FXCM_PASS: ${{ secrets.FXCM_PASS }}
-          FXCM_CONNECTION: Demo
+          FXCM_CONNECTION: Real
         run: >-
           python scripts/download_history.py
           --symbols "EUR/USD"

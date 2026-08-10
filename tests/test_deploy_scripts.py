@@ -86,3 +86,17 @@ def test_broker_pide_el_historico_del_instrumento_configurado():
 
     assert broker._fx.calls[0][0:2] == ("XAU/USD", "H4")
     assert candles.iloc[0]["close"] == 4005.0
+
+
+def test_broker_read_only_bloquea_todas_las_rutas_de_ordenes():
+    broker = FxcmBroker(
+        FxcmCredentials(user="real", password="secret", connection="Real"),
+        read_only=True,
+    )
+
+    with pytest.raises(PermissionError, match="solo lectura"):
+        broker.open_position("long", 1_000, 10.0, 1.1)
+    with pytest.raises(PermissionError, match="solo lectura"):
+        broker.open_position_pips("long", 1_000, 10.0, 20.0)
+    with pytest.raises(PermissionError, match="solo lectura"):
+        broker.close_trade("trade-id")

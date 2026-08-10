@@ -33,7 +33,7 @@ La salida esperada contiene `billingEnabled: false`.
 
 ## 2. GitHub Actions
 
-Configura solamente credenciales de la cuenta Demo y la clave de Firestore:
+Configura las credenciales de Trading Station y la clave de Firestore:
 
 ```bash
 gh secret set FXCM_USER
@@ -44,7 +44,9 @@ gh secret set GOOGLE_SERVICE_ACCOUNT_JSON < /ruta/privada/service-account.json
 `.github/workflows/scheduled-tick.yml` usa `python:3.7-slim`, porque el ultimo
 wheel de ForexConnect para Linux requiere CPython 3.7 x86_64. Cada ejecucion es
 idempotente: procesa como maximo una vela cerrada, persiste el paper broker y
-publica el snapshot consumido por Vercel.
+publica el snapshot consumido por Vercel. La conexion FXCM de produccion tiene
+`read_only=True`: sus tres rutas de ordenes fallan antes de crear una solicitud.
+La cuenta real aporta precios e historico, nunca ejecucion.
 
 Prueba el job sin esperar al cron:
 
@@ -84,5 +86,6 @@ manuales, no dentro de una funcion de Vercel.
 4. Ejecuta manualmente `scheduled-tick.yml` y revisa que termine en verde.
 5. Abre el panel y confirma que `updated_at` cambia tras el workflow.
 
-Este alcance es paper trading. `FXCM_CONNECTION` esta fijado a `Demo` dentro del
-workflow y no se expone como input configurable.
+Este alcance es paper trading. `FXCM_CONNECTION` esta fijado a `Real`, pero la
+cuenta se abre mediante el adaptador de solo lectura y todas las posiciones se
+mantienen exclusivamente en `PaperBroker`.
