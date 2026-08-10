@@ -1,155 +1,116 @@
 "use client";
-/* Credenciales de la cuenta FXCM: edición, reconexión en caliente y
-   detección automática de si la cuenta es DEMO o REAL. */
 
 import { useEffect, useState } from "react";
 import { getJSON, postJSON } from "@/lib/api";
 import { fmt } from "@/lib/format";
 import { useLive } from "@/lib/live";
 
-interface CredState {
-  user: string;
-  has_password: boolean;
-  connection: string;
-  mode: string;
-  connected: boolean;
-  is_real: boolean;
-  account_id?: string | null;
-  balance?: number | null;
-}
+type Connection = "Demo" | "Real";
 
-interface SaveResult {
-  ok: boolean;
-  error?: string;
-  connection?: string;
-  is_real?: boolean;
-  account_id?: string;
-  balance?: number;
-  paused?: boolean;
+interface AccountState {
+  connection: Connection;
+  running: boolean;
+  queued_commands: number;
 }
 
 export default function AccountCard() {
   const { status, refreshStatus } = useLive();
-  const [cred, setCred] = useState<CredState | null>(null);
-  const [user, setUser] = useState("");
-  const [password, setPassword] = useState("");
-  const [connection, setConnection] = useState("auto");
+  const [account, setAccount] = useState<AccountState | null>(null);
+  const [connection, setConnection] = useState<Connection>("Demo");
+  const [acknowledgeReal, setAcknowledgeReal] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<SaveResult | null>(null);
+  const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
 
   async function load() {
-    try {
-      const c = await getJSON<CredState>("/api/credentials");
-      setCred(c);
-      setUser(c.user);
-    } catch {
-      /* backend caído */
-    }
+    const next = await getJSON<AccountState>("/api/account");
+    setAccount(next);
+    setConnection(next.connection);
   }
 
-  // Recargar cuando cambia la conexión/modo (p. ej. tras reconectar el backend)
-  useEffect(() => { load(); }, [status?.connected, status?.mode]);
+  useEffect(() => { load().catch(() => {}); }, [status?.connected, status?.mode]);
 
   async function save() {
-    if (!user.trim()) { setResult({ ok: false, error: "Usuario obligatorio" }); return; }
-    if (connection === "Real" || (cred?.is_real && connection === "auto")) {
-      if (!confirm("⚠ Vas a conectar una cuenta que puede ser REAL (dinero real). ¿Continuar?")) return;
+    if (connection === "Real" && !acknowledgeReal) {
+      setMessage({ text: "Confirma que operarás con dinero real.", ok: false });
+      return;
     }
     setBusy(true);
-    setResult(null);
     try {
-      const r = await postJSON<SaveResult>("/api/credentials", {
-        user: user.trim(),
-        password,
+      const result = await postJSON<{ ok: boolean; error?: string }>("/api/account", {
         connection,
+        confirm_real: connection === "Real" && acknowledgeReal,
       });
-      setResult(r);
-      if (r.ok) {
-        setPassword("");
-        await load();
-        await refreshStatus();
+      if (!result.ok) {
+        setMessage({ text: result.error || "No se pudo cambiar la cuenta.", ok: false });
+        return;
       }
-    } catch (e) {
-      setResult({ ok: false, error: String(e) });
+      setMessage({ text: `Cuenta ${connection} seleccionada.`, ok: true });
+      await load();
+      await refreshStatus();
+    } catch {
+      setMessage({ text: "No se pudo guardar la selección.", ok: false });
     } finally {
       setBusy(false);
     }
   }
 
-  const modeBadge = !cred ? null : cred.mode === "simulado" ? (
-    <span className="chip warn">SIMULADO</span>
-  ) : cred.is_real ? (
-    <span className="chip real">● CUENTA REAL</span>
-  ) : (
-    <span className="chip ok">CUENTA DEMO</span>
-  );
+  const liveAccount = status?.account;
+  const real = connection === "Real";
 
   return (
-    <div className="card narrow mb">
+    <section className="card narrow mb" aria-labelledby="account-title">
       <div className="card-head">
-        <div className="card-title">🔐 CUENTA FXCM</div>
-        <div style={{ display: "flex", gap: 8 }}>
-          {modeBadge}
-          <span className={`chip${cred?.connected ? " ok" : " warn"}`}>
-            {cred?.connected ? "CONECTADO" : "SIN CONEXIÓN"}
-          </span>
-        </div>
+        <div className="card-title" id="account-title">CUENTA DE EJECUCIÓN</div>
+        <span className={`chip ${real ? "real" : "ok"}`}>{real ? "CUENTA REAL" : "CUENTA DEMO"}</span>
       </div>
 
-      {cred?.connected && cred.account_id && (
-        <div className="hint" style={{ marginBottom: 14 }}>
-          Cuenta <b>{cred.account_id}</b> · Balance ${fmt(cred.balance)} · Conexión {cred.connection}
-        </div>
+      {liveAccount?.account_id && (
+        <p className="hint" style={{ marginBottom: 14 }}>
+          Último estado: <b>{liveAccount.account_id}</b> · Balance ${fmt(liveAccount.balance)}
+        </p>
       )}
 
       <div className="form-grid">
         <label>
-          USUARIO FXCM
-          <input value={user} onChange={(e) => setUser(e.target.value)} placeholder="D161666928" />
-        </label>
-        <label>
-          CONTRASEÑA
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder={cred?.has_password ? "•••••• (sin cambios)" : "contraseña"}
-          />
-        </label>
-        <label>
-          TIPO DE CUENTA
-          <select value={connection} onChange={(e) => setConnection(e.target.value)}>
-            <option value="auto">Detectar automáticamente</option>
-            <option value="Demo">Demo (práctica)</option>
-            <option value="Real">Real (dinero real)</option>
+          CUENTA FXCM
+          <select
+            value={connection}
+            disabled={busy || !!account?.running}
+            onChange={(event) => {
+              const value = event.target.value as Connection;
+              setConnection(value);
+              if (value !== "Real") setAcknowledgeReal(false);
+            }}
+          >
+            <option value="Demo">Demo</option>
+            <option value="Real">Real</option>
           </select>
         </label>
       </div>
 
-      <div className="form-actions">
-        <button className="btn btn-start" disabled={busy} onClick={save}>
-          {busy ? "CONECTANDO…" : "GUARDAR Y CONECTAR"}
-        </button>
-        {result && !result.ok && <span className="hint err">✗ {result.error}</span>}
-        {result?.ok && !result.is_real && (
-          <span className="hint ok">
-            ✓ Conectado — cuenta {result.connection} {result.account_id} (${fmt(result.balance)})
-          </span>
-        )}
-      </div>
-
-      {result?.ok && result.is_real && (
-        <div className="bt-banner bad" style={{ marginTop: 14 }}>
-          ⚠ CUENTA REAL detectada ({result.account_id}, ${fmt(result.balance)}). El bot quedó
-          PAUSADO automáticamente: con dinero real solo debes activarlo tras validar la
-          estrategia en demo durante semanas.
-        </div>
+      {real && (
+        <label className="real-ack">
+          <input
+            type="checkbox"
+            checked={acknowledgeReal}
+            disabled={busy || !!account?.running}
+            onChange={(event) => setAcknowledgeReal(event.target.checked)}
+          />
+          <span>Entiendo que las órdenes se enviarán a la cuenta Real seleccionada.</span>
+        </label>
       )}
 
-      <div className="hint" style={{ marginTop: 12 }}>
-        Las credenciales se guardan solo en el archivo local .env (fuera de git) y son las
-        mismas que usas para conectar TradingView con FXCM. La contraseña nunca se muestra.
+      <div className="form-actions">
+        <button className="btn btn-start" disabled={busy || !!account?.running} onClick={save}>
+          {busy ? "GUARDANDO…" : "SELECCIONAR CUENTA"}
+        </button>
+        {message && <span className={`hint ${message.ok ? "ok" : "err"}`}>{message.text}</span>}
       </div>
-    </div>
+
+      <p className="hint" style={{ marginTop: 12 }}>
+        Las credenciales viven exclusivamente en GitHub Secrets. Detén el bot antes de cambiar de cuenta.
+        {account?.queued_commands ? ` Hay ${account.queued_commands} comando(s) en cola.` : ""}
+      </p>
+    </section>
   );
 }

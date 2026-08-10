@@ -140,6 +140,19 @@ export async function setState(key: string, value: unknown): Promise<void> {
   });
 }
 
+export async function setCollectionDocument(
+  name: string,
+  id: string,
+  value: Record<string, unknown>,
+): Promise<void> {
+  await firestoreFetch(documentUrl(`${prefix()}_${name}`, id), {
+    method: "PATCH",
+    body: JSON.stringify({
+      fields: Object.fromEntries(Object.entries(value).map(([key, item]) => [key, encode(item)])),
+    }),
+  });
+}
+
 export async function collectionRows(name: string): Promise<Record<string, unknown>[]> {
   const rows: Record<string, unknown>[] = [];
   let pageToken = "";

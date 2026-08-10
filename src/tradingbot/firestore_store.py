@@ -29,6 +29,7 @@ class FirestoreStore:
         self._trades = self._client.collection(f"{prefix}_trades")
         self._equity = self._client.collection(f"{prefix}_equity")
         self._logs = self._client.collection(f"{prefix}_logs")
+        self._commands = self._client.collection(f"{prefix}_commands")
 
     @staticmethod
     def _build_client(project_id: str):
@@ -183,3 +184,59 @@ class FirestoreStore:
             {"ts": row["ts"], "level": row["level"], "message": row["message"]}
             for row in rows
         ]
+
+    # -- cola de ejecucion ---------------------------------------------
+
+    def enqueue_command(self, kind: str, connection: str, payload: dict) -> dict:
+        command_id = uuid.uuid4().hex
+        row = {
+            "id": command_id,
+            "kind": kind,
+            "connection": connection,
+            "payload": payload,
+            "status": "queued",
+            "created_at": _now(),
+            "started_at": None,
+            "finished_at": None,
+            "result": None,
+            "error": None,
+        }
+        self._commands.document(command_id).set(row)
+        return row
+
+    def queued_commands(self, connection: str | None = None) -> list[dict]:
+        rows = [row for row in self._rows(self._commands) if row.get("status") == "queued"]
+        if connection:
+            rows = [row for row in rows if row.get("connection") == connection]
+        return sorted(rows, key=lambda row: row.get("created_at", ""))
+
+    def command_count(self, status: str = "queued") -> int:
+        return sum(row.get("status") == status for row in self._rows(self._commands))
+
+    def start_command(self, command_id: str) -> None:
+        self._commands.document(command_id).update({"status": "running", "started_at": _now()})
+
+    def finish_command(self, command_id: str, result: dict | None = None) -> None:
+        self._commands.document(command_id).update(
+            {"status": "done", "finished_at": _now(), "result": result or {}, "error": None}
+        )
+
+    def fail_command(self, command_id: str, error: str) -> None:
+        self._commands.document(command_id).update(
+            {"status": "error", "finished_at": _now(), "error": str(error)[:500]}
+        )
+
+    def cancel_pending_opens(self) -> int:
+        cancelled = 0
+        for row in self.queued_commands():
+            if row.get("kind") != "open":
+                continue
+            self._commands.document(row["id"]).update(
+                {
+                    "status": "cancelled",
+                    "finished_at": _now(),
+                    "error": "Bot detenido antes de ejecutar la orden",
+                }
+            )
+            cancelled += 1
+        return cancelled

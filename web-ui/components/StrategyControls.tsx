@@ -59,12 +59,14 @@ export default function StrategyControls() {
 
   async function force(side: "long" | "short") {
     const label = side === "long" ? "COMPRA" : "VENTA";
-    if (!confirm(`¿Ejecutar ${label} manual de ${lots} lotes (SL ${sl} / TP ${tp} pips)?`)) return;
+    const account = await getJSON<{ connection: "Demo" | "Real" }>("/api/account").catch(() => null);
+    const realWarning = account?.connection === "Real" ? " en la CUENTA REAL" : " en Demo";
+    if (!confirm(`¿Encolar ${label} manual de ${lots} lotes (SL ${sl} / TP ${tp} pips)${realWarning}?`)) return;
     const r = await postJSON<{ ok: boolean; units?: number; error?: string }>(
       `/api/manual/${side}`,
-      { lots, sl_pips: sl, tp_pips: tp }
+      { lots, sl_pips: sl, tp_pips: tp, confirm_real: account?.connection === "Real" }
     );
-    showMsg(r.ok ? `Orden ${label} enviada (${fmt(r.units ?? 0, 0)} unidades)` : `Error: ${r.error}`, !!r.ok);
+    showMsg(r.ok ? `Orden ${label} en cola para ${account?.connection ?? "FXCM"}` : `Error: ${r.error}`, !!r.ok);
   }
 
   async function toggleAuto(run: boolean) {

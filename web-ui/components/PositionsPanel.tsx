@@ -15,8 +15,8 @@ export default function PositionsPanel({ onAction }: { onAction?: (msg: string, 
 
   async function closeAll() {
     if (!confirm("¿Cerrar TODAS las posiciones abiertas a mercado?")) return;
-    const r = await postJSON<{ ok: boolean; closed: number }>("/api/close-all");
-    onAction?.(r.closed ? `${r.closed} posición(es) cerrada(s)` : "No había posiciones", true);
+    const r = await postJSON<{ ok: boolean; error?: string }>("/api/close-all");
+    onAction?.(r.ok ? "Cierre total en cola" : `Error: ${r.error}`, !!r.ok);
   }
 
   return (

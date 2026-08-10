@@ -159,6 +159,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .btn-buy { background: #2f9e63; color: #062b18; width: 100%; }
 .btn-sell { background: #4a2b2d; color: var(--red); border-color: #5f3736; width: 100%; }
 
+.real-ack {
+  display: flex; align-items: flex-start; gap: 9px; margin-top: 14px;
+  padding: 11px 12px; border: 1px solid #6f3634; border-radius: 7px;
+  color: #f3b2ae; background: rgba(240, 113, 106, 0.08); font-size: 11px; line-height: 1.5;
+}
+.real-ack input { width: 16px; height: 16px; flex: 0 0 auto; accent-color: var(--red); }
+
 /* ================= métricas ================= */
 .metric-row {
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px;

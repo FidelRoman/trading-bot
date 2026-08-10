@@ -3,7 +3,8 @@
 La produccion usa tres servicios y no necesita un servidor persistente:
 
 - Vercel Hobby sirve `web-ui/` y la API autenticada de lectura/control.
-- GitHub Actions ejecuta una evaluacion cada hora de lunes a viernes.
+- GitHub Actions ejecuta la estrategia y los comandos en cola cada cinco minutos
+  de lunes a viernes.
 - Firestore conserva estado, operaciones, equity, logs y el snapshot del panel.
 
 El proyecto de Google Cloud debe permanecer **sin cuenta de facturacion**. De
@@ -33,20 +34,22 @@ La salida esperada contiene `billingEnabled: false`.
 
 ## 2. GitHub Actions
 
-Configura las credenciales de Trading Station y la clave de Firestore:
+Configura las dos cuentas de Trading Station y la clave de Firestore:
 
 ```bash
+gh secret set FXCM_USER_DEMO
+gh secret set FXCM_PASS_DEMO
 gh secret set FXCM_USER
 gh secret set FXCM_PASS
 gh secret set GOOGLE_SERVICE_ACCOUNT_JSON < /ruta/privada/service-account.json
 ```
 
 `.github/workflows/scheduled-tick.yml` usa `python:3.7-slim`, porque el ultimo
-wheel de ForexConnect para Linux requiere CPython 3.7 x86_64. Cada ejecucion es
-idempotente: procesa como maximo una vela cerrada, persiste el paper broker y
-publica el snapshot consumido por Vercel. La conexion FXCM de produccion tiene
-`read_only=True`: sus tres rutas de ordenes fallan antes de crear una solicitud.
-La cuenta real aporta precios e historico, nunca ejecucion.
+wheel de ForexConnect para Linux requiere CPython 3.7 x86_64. Vercel escribe
+comandos autenticados en Firestore y este workflow es el unico que posee las
+credenciales y puede ejecutar una orden. Cada comando queda sellado con `Demo`
+o `Real`, se marca como `done`, `error` o `cancelled`, y la estrategia solo
+opera cuando el estado del bot es iniciado.
 
 Prueba el job sin esperar al cron:
 
@@ -55,8 +58,10 @@ gh workflow run scheduled-tick.yml --ref main
 gh run watch
 ```
 
-El cron corre al minuto 7 de cada hora, de lunes a viernes. GitHub puede
-retrasarlo; la frontera persistida impide procesar dos veces la misma vela.
+El cron corre cada cinco minutos, de lunes a viernes. GitHub puede retrasarlo;
+la frontera persistida impide procesar dos veces la misma vela. Una orden desde
+la interfaz se ejecuta en el siguiente run disponible, no directamente desde
+Vercel.
 
 ## 3. Vercel
 
@@ -73,9 +78,11 @@ No configures `BACKEND_URL`: sin esa variable, `/api/*` se resuelve en las
 funciones de Vercel que leen Firestore directamente. El token se introduce en
 la interfaz y queda en `sessionStorage`; nunca debe tener prefijo `NEXT_PUBLIC_`.
 
-La interfaz consulta `/api/snapshot` cada 60 segundos. Los comandos de pausa y
-cierre escriben una orden en Firestore; el siguiente tick programado la aplica.
-Entrenar, precalcular o descargar historicos se hace mediante los workflows
+La interfaz consulta `/api/snapshot` cada 60 segundos. Seleccionar `Real`
+requiere confirmacion, solo es posible con el bot detenido y no permite cambiar
+de cuenta mientras haya aperturas pendientes. Detener el bot cancela esas
+aperturas. Backtests, aperturas y cierres se encolan en Firestore; el siguiente
+tick programado los procesa. Entrenar y precalcular se hace mediante workflows
 manuales, no dentro de una funcion de Vercel.
 
 ## 4. Verificacion
@@ -86,6 +93,6 @@ manuales, no dentro de una funcion de Vercel.
 4. Ejecuta manualmente `scheduled-tick.yml` y revisa que termine en verde.
 5. Abre el panel y confirma que `updated_at` cambia tras el workflow.
 
-Este alcance es paper trading. `FXCM_CONNECTION` esta fijado a `Real`, pero la
-cuenta se abre mediante el adaptador de solo lectura y todas las posiciones se
-mantienen exclusivamente en `PaperBroker`.
+La ejecución puede ser Demo o Real según la cuenta seleccionada en Vercel. La
+cuenta Real mueve dinero real: valida primero la estrategia en Demo, usa límites
+de riesgo pequeños y no dejes el bot iniciado sin supervisión operativa.

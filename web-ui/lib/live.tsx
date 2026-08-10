@@ -48,7 +48,13 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
         prices: Prices | null;
         positions: Position[];
       }>("/api/snapshot");
-      setStatus(snapshot.status);
+      const control = await getJSON<{ connection: "Demo" | "Real"; running: boolean }>("/api/account");
+      setStatus({
+        ...snapshot.status,
+        running: control.running,
+        paused: !control.running,
+        mode: snapshot.status.connected ? `fxcm-${control.connection.toLowerCase()}` : snapshot.status.mode,
+      });
       setPrices(snapshot.prices);
       setPositions(snapshot.positions ?? []);
       setFloatingPl(

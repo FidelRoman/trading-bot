@@ -240,7 +240,7 @@ export interface BacktestSummary {
 }
 
 export interface BacktestState {
-  status: "idle" | "running" | "done" | "error";
+  status: "idle" | "queued" | "running" | "done" | "error";
   note?: string;
   error?: string;
   source?: string;

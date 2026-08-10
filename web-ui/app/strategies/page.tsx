@@ -144,14 +144,14 @@ export default function StrategiesPage() {
     try {
       const s = await getJSON<BacktestState>("/api/backtest");
       
-      if (s.status === "running") {
+      if (s.status === "queued" || s.status === "running") {
         if (runningStrategy) {
           setBtMsgs(prev => ({
             ...prev,
-            [runningStrategy]: { text: s.note || "Ejecutando…", cls: "" }
+            [runningStrategy]: { text: s.note || (s.status === "queued" ? "En cola…" : "Ejecutando…"), cls: "" }
           }));
         }
-        if (!pollRef.current) pollRef.current = setInterval(refresh, 2000);
+        if (!pollRef.current) pollRef.current = setInterval(refresh, 15_000);
       } else {
         if (pollRef.current) {
           clearInterval(pollRef.current);

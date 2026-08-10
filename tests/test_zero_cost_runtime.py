@@ -70,6 +70,21 @@ def test_firestore_store_cubre_estado_trades_equity_y_logs(monkeypatch):
     assert store.recent_logs()[0]["message"] == "tick"
 
 
+def test_firestore_store_persiste_y_cancela_comandos_de_apertura(monkeypatch):
+    monkeypatch.setenv("FIRESTORE_COLLECTION_PREFIX", "test")
+    store = FirestoreStore("free-project", client=FirestoreClient())
+    opening = store.enqueue_command("open", "Demo", {"side": "long", "lots": 0.01})
+    closing = store.enqueue_command("close_all", "Demo", {})
+
+    assert [row["id"] for row in store.queued_commands("Demo")] == [opening["id"], closing["id"]]
+    assert store.cancel_pending_opens() == 1
+    assert [row["kind"] for row in store.queued_commands("Demo")] == ["close_all"]
+
+    store.start_command(closing["id"])
+    store.finish_command(closing["id"], {"closed": 2})
+    assert store.command_count("done") == 1
+
+
 def test_paper_broker_restaura_y_persiste_su_posicion():
     saved = []
     broker = PaperBroker(
