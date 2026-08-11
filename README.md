@@ -70,7 +70,9 @@ Sortino).
 
 ## Dashboard web (Next.js)
 
-Frontend **Next.js** (`web-ui/`, puerto 3000) contra el backend FastAPI (API + bot):
+Todo corre en local. El frontend **Next.js** (`web-ui/`) se compila a un export
+estático que sirve el propio backend FastAPI, de modo que interfaz, `/api/*` y
+`/ws` comparten un único origen en el puerto 8000:
 
 - **Dashboard**: velas con la señal FSR reconstruida superpuesta, ticker en vivo,
   posición neta y P&L, toggle de auto-trading, logs.
@@ -144,9 +146,11 @@ es donde el método está validado.
 ## Instalación
 
 ```bash
-uv sync                                # instala Python 3.10 + dependencias
-./scripts/fix_forexconnect_macos.sh    # re-enlaza el binario FXCM (solo macOS)
-cp .env.example .env                   # y completa FXCM_USER / FXCM_PASS
+uv sync                                     # instala Python 3.10 + dependencias
+./scripts/fix_forexconnect_macos.sh         # re-enlaza el binario FXCM (solo macOS)
+cp .env.example .env                        # y completa FXCM_USER / FXCM_PASS
+echo "BOT_API_TOKEN=$(openssl rand -hex 32)" >> .env
+cd web-ui && npm install && npm run build   # compila la interfaz a web-ui/out/
 ```
 
 Python está fijado a **3.10** por el único wheel de `forexconnect` para macOS
@@ -157,18 +161,18 @@ ARM64. Hay que re-ejecutar `fix_forexconnect_macos.sh` después de cada `uv sync
 ```bash
 uv run pytest                                  # batería completa
 
-# 1) Backend: API + bot (usa MOCK=1 para modo simulado sin credenciales)
-uv run uvicorn tradingbot.web.app:app --port 8000
-
-# 2) Frontend Next.js (primera vez: cd web-ui && npm install)
-cd web-ui && npm run dev        # abre http://localhost:3000
+# Backend: interfaz + API + bot en un solo puerto (MOCK=1 = simulado sin credenciales)
+caffeinate -s uv run uvicorn tradingbot.web.app:app --port 8000 \
+  --proxy-headers --forwarded-allow-ips="*"
 ```
 
-Configura `BOT_API_TOKEN` incluso en desarrollo. Si el backend corre en otro
-puerto, exporta antes de `npm run dev`: `BACKEND_URL=http://localhost:PUERTO` y
-`NEXT_PUBLIC_BACKEND_PORT=PUERTO`.
+Abre <http://localhost:8000> e introduce el `BOT_API_TOKEN`. El bot opera
+mientras el proceso esté vivo y la Mac despierta (de ahí `caffeinate -s`).
 
-El bot opera mientras la Mac esté despierta: `caffeinate -s uv run uvicorn …`.
+Para acceder desde fuera de casa, `./scripts/tunnel.sh` publica ese puerto en una
+URL HTTPS de Cloudflare sin abrir puertos del router; los datos no salen del
+disco local. Detalles, túnel con URL estable y desarrollo con recarga en caliente
+(`npm run dev`): [`docs/local.md`](docs/local.md).
 
 ## Advertencias
 
@@ -179,5 +183,5 @@ El bot opera mientras la Mac esté despierta: `caffeinate -s uv run uvicorn …`
   de test, en al menos 7 de 10 semillas. Si no se cumple, el bot se queda en
   backtest.
 - El servidor protege `/api/*` y `/ws` con `BOT_API_TOKEN` y falla cerrado si no
-  está configurado. Para Vercel, Docker y Cloudflare Tunnel consulta
-  [`docs/deployment.md`](docs/deployment.md).
+  está configurado. Al exponer el puerto por un túnel, ese token es lo único que
+  separa tus datos de Internet: genéralo largo y no lo compartas.

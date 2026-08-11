@@ -195,15 +195,3 @@ class Store:
                 "SELECT ts, level, message FROM log ORDER BY id DESC LIMIT ?", (limit,)
             ).fetchall()
         return [dict(r) for r in reversed(rows)]
-
-
-def create_store(path: Path | str):
-    """Selecciona Firestore solo cuando el despliegue lo configura explicitamente."""
-    import os
-
-    project_id = os.getenv("FIRESTORE_PROJECT_ID", "").strip()
-    if project_id:
-        from .firestore_store import FirestoreStore
-
-        return FirestoreStore(project_id)
-    return Store(path)

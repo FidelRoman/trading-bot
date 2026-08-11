@@ -38,18 +38,15 @@ export async function postJSON<T = { ok: boolean; error?: string }>(
   return r.json();
 }
 
+/** En producción la UI la sirve el propio backend, así que el WebSocket vive en
+ *  el mismo origen y atraviesa el túnel sin configuración extra. En `next dev`
+ *  el frontend está en otro puerto: NEXT_PUBLIC_BACKEND_PORT apunta al backend. */
 export function wsUrl(): string {
-  const configured = process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/$/, "");
-  if (configured) {
-    const url = new URL(configured);
-    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    url.pathname = "/ws";
-    url.search = "";
-    return url.toString();
-  }
-  const port = process.env.NEXT_PUBLIC_BACKEND_PORT ?? "8000";
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${proto}://${window.location.hostname}:${port}/ws`;
+  const port = process.env.NEXT_PUBLIC_BACKEND_PORT;
+  return port
+    ? `${proto}://${window.location.hostname}:${port}/ws`
+    : `${proto}://${window.location.host}/ws`;
 }
 
 export function wsProtocols(): string[] {

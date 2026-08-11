@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+from urllib.parse import urlsplit
 
 __all__ = ["BearerAuthMiddleware", "allowed_origins"]
 
@@ -43,6 +44,22 @@ def _websocket_token(scope: dict) -> str:
     return ""
 
 
+def _same_origin(scope: dict) -> bool:
+    """El backend sirve la interfaz, así que el caso normal es mismo origen.
+
+    Compararlo con ``Host`` permite que localhost, la LAN y cualquier túnel
+    (que conserva la cabecera Host) funcionen sin tocar BOT_ALLOWED_ORIGINS,
+    sin abrir la puerta a otro sitio web: una petición cross-origin sigue
+    necesitando estar en la lista.
+    """
+    origin = _header(scope, b"origin")
+    host = _header(scope, b"host")
+    if not origin or not host:
+        return False
+    netloc = urlsplit(origin).netloc
+    return bool(netloc) and netloc == host
+
+
 def _matches(provided: str, expected: str) -> bool:
     return bool(provided and expected) and secrets.compare_digest(provided, expected)
 
@@ -73,7 +90,12 @@ class BearerAuthMiddleware:
         expected = os.getenv(TOKEN_ENV, "")
         provided = _websocket_token(scope) if protected_ws else _authorization_token(scope)
         origin = _header(scope, b"origin").rstrip("/")
-        origin_ok = not protected_ws or not origin or origin in allowed_origins()
+        origin_ok = (
+            not protected_ws
+            or not origin
+            or _same_origin(scope)
+            or origin in allowed_origins()
+        )
 
         if expected and _matches(provided, expected) and origin_ok:
             await self.app(scope, receive, send)

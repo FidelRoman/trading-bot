@@ -1,5 +1,9 @@
 """Dashboard web: FastAPI + WebSocket sobre el engine.
 
+Sirve también la interfaz Next.js exportada a estático (``web-ui/out``), de modo
+que UI, ``/api/*`` y ``/ws`` comparten un único origen y un único puerto: basta
+exponer ese puerto para acceder desde fuera.
+
 Arranque: si hay credenciales FXCM en .env usa el bróker real (Demo/Real según
 FXCM_CONNECTION); si faltan credenciales o MOCK=1, usa el bróker simulado para
 poder ver el dashboard y probar el pipeline sin cuenta.
@@ -7,7 +11,6 @@ poder ver el dashboard y probar el pipeline sin cuenta.
 from __future__ import annotations
 
 import asyncio
-import functools
 import json
 import logging
 import os
@@ -16,12 +19,12 @@ from dataclasses import replace
 from pathlib import Path
 
 from fastapi import Body, FastAPI, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from ..config import load_settings
+from ..config import PROJECT_ROOT, load_settings
 from ..engine import BotEngine
-from ..store import create_store
+from ..store import Store
 from ..strategy import add_indicators
 from .backtest_job import UPLOAD_CSV, BacktestJob
 from .auth import BearerAuthMiddleware, allowed_origins
@@ -30,16 +33,8 @@ from .training_job import TrainingJob
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger(__name__)
 
-STATIC_DIR = Path(__file__).parent / "static"
-
-# Python 3.7 no trae asyncio.to_thread. La imagen del bot usa 3.7 porque es la
-# unica version Linux para la que forexconnect publica wheel x86_64.
-if not hasattr(asyncio, "to_thread"):
-    async def _to_thread(function, *args, **kwargs):
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, functools.partial(function, *args, **kwargs))
-
-    asyncio.to_thread = _to_thread
+# Export estático de Next (`cd web-ui && npm run build`). Puede no existir aún.
+UI_DIR = PROJECT_ROOT / "web-ui" / "out"
 
 
 class WsHub:
@@ -99,7 +94,7 @@ def _make_broker(settings, store=None):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = load_settings()
-    store = create_store(settings.db_path)
+    store = Store(settings.db_path)
     broker = _make_broker(settings, store)
     engine = BotEngine(broker, store, settings)
     hub = WsHub()
@@ -123,8 +118,7 @@ async def lifespan(app: FastAPI):
 
     app.state.training = TrainingJob(store, notify=notificar)
 
-    scheduled_mode = os.getenv("EXECUTION_MODE", "continuous").lower() == "scheduled"
-    engine_task = None if scheduled_mode else asyncio.create_task(engine.run())
+    engine_task = asyncio.create_task(engine.run())
 
     async def price_pump() -> None:
         while True:
@@ -154,17 +148,15 @@ async def lifespan(app: FastAPI):
     finally:
         engine.stop()
         pump_task.cancel()
-        tasks = [pump_task]
-        if engine_task is not None:
-            engine_task.cancel()
-            tasks.append(engine_task)
-        await asyncio.gather(*tasks, return_exceptions=True)
+        engine_task.cancel()
+        await asyncio.gather(pump_task, engine_task, return_exceptions=True)
         await asyncio.to_thread(app.state.broker.disconnect)
 
 
-app = FastAPI(title="EUR/USD Bollinger Bot", lifespan=lifespan)
+app = FastAPI(title="FSRPPO·BOT — EUR/USD H1", lifespan=lifespan)
 
-# El frontend Next.js corre en otro puerto en desarrollo (localhost únicamente)
+# En producción la UI se sirve desde este mismo origen y CORS sobra. Hace falta
+# para `next dev`, que sirve el frontend en otro puerto.
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 app.add_middleware(BearerAuthMiddleware)
@@ -176,14 +168,9 @@ app.add_middleware(
 )
 
 
-@app.get("/")
-async def index():
-    return FileResponse(STATIC_DIR / "index.html")
-
-
 @app.get("/healthz")
 async def healthz():
-    return {"ok": True, "execution_mode": os.getenv("EXECUTION_MODE", "continuous")}
+    return {"ok": True, "ui_built": UI_DIR.is_dir()}
 
 
 @app.get("/api/status")
@@ -384,12 +371,11 @@ async def set_credentials(payload: dict = Body(...)):
 
     # Recargar configuración y re-crear store para el nuevo modo si cambió
     from ..config import load_settings
-    from ..store import create_store
 
     new_settings = load_settings()
     if str(app.state.store.path) != str(new_settings.db_path):
         old_store = app.state.store
-        new_store = create_store(new_settings.db_path)
+        new_store = Store(new_settings.db_path)
         
         # Swap store references
         app.state.store = new_store
@@ -786,15 +772,6 @@ async def model_deactivate():
     return {"ok": True, "active": None}
 
 
-@app.post("/api/scheduled/tick")
-async def scheduled_tick():
-    """Evaluacion idempotente invocada por el scheduler gratuito."""
-    if os.getenv("EXECUTION_MODE", "continuous").lower() != "scheduled":
-        return {"ok": False, "error": "el backend no esta en modo scheduled"}
-    result = await app.state.engine.run_once()
-    return {"ok": True, **result}
-
-
 @app.delete("/api/models/{run_id}")
 async def model_delete(run_id: str):
     from ..rl.registry import ModelRegistry
@@ -818,4 +795,18 @@ async def ws_endpoint(ws: WebSocket):
         hub.remove(ws)
 
 
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+if UI_DIR.is_dir():
+    # Va al final a propósito: este mount captura toda ruta que no haya casado
+    # antes con /api, /ws o /healthz. `html=True` resuelve /fsr/ →
+    # out/fsr/index.html y devuelve out/404.html cuando no existe el fichero.
+    app.mount("/", StaticFiles(directory=UI_DIR, html=True), name="ui")
+else:
+    @app.get("/")
+    async def ui_missing():
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "Interfaz sin compilar. Ejecuta: cd web-ui && npm run build",
+            },
+            status_code=503,
+        )

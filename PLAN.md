@@ -239,9 +239,9 @@ uv run python scripts/train_fsrppo.py --train-end 2025-06-30 --seeds 10
 # 3. Backtest comparativo del modelo activo frente a los benchmarks
 uv run python scripts/run_backtest.py --strategy fsrppo --compare
 
-# 4. Backend + UI
-MOCK=1 uv run uvicorn tradingbot.web.app:app --port 8000
-cd web-ui && npm install && npm run dev               # http://localhost:3000
+# 4. Backend + UI (un solo puerto: el backend sirve el export de web-ui/out)
+cd web-ui && npm install && npm run build
+MOCK=1 uv run uvicorn tradingbot.web.app:app --port 8000   # http://localhost:8000
 ```
 
 Recorrido manual en la UI, que es lo que cierra el círculo:

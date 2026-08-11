@@ -104,11 +104,63 @@ async def test_websocket_acepta_token_como_subprotocolo_y_valida_origen(monkeypa
 
 
 @pytest.mark.anyio
+async def test_websocket_acepta_mismo_origen_sin_lista_blanca(monkeypatch):
+    """El backend sirve la interfaz: un túnel o la LAN son siempre mismo origen."""
+    monkeypatch.setenv("BOT_API_TOKEN", "token-websocket")
+    monkeypatch.setenv("BOT_ALLOWED_ORIGINS", "http://localhost:3000")
+    reached = []
+
+    async def downstream(scope, receive, send):
+        reached.append(scope["path"])
+
+    async def receive():
+        return {"type": "websocket.connect"}
+
+    async def send(message):
+        pass
+
+    middleware = BearerAuthMiddleware(downstream)
+    await middleware(
+        {
+            "type": "websocket",
+            "path": "/ws",
+            "headers": [
+                (b"host", b"algo.trycloudflare.com"),
+                (b"origin", b"https://algo.trycloudflare.com"),
+                (b"sec-websocket-protocol", b"bearer, token-websocket"),
+            ],
+        },
+        receive,
+        send,
+    )
+    assert reached == ["/ws"]
+
+    # Un origen distinto al Host sigue necesitando la lista blanca.
+    reached.clear()
+    await middleware(
+        {
+            "type": "websocket",
+            "path": "/ws",
+            "headers": [
+                (b"host", b"algo.trycloudflare.com"),
+                (b"origin", b"https://evil.example"),
+                (b"sec-websocket-protocol", b"bearer, token-websocket"),
+            ],
+        },
+        receive,
+        send,
+    )
+    assert not reached
+
+
+@pytest.mark.anyio
 async def test_cors_incluye_respuesta_de_auth_para_origen_permitido(monkeypatch):
     monkeypatch.setenv("BOT_API_TOKEN", "correcto")
     monkeypatch.setenv("BOT_ALLOWED_ORIGINS", "https://panel.example")
 
     # Importar aqui usa la aplicacion real y verifica el orden de middlewares.
+    # CORSMiddleware congela allow_origins en el import, asi que este test tiene
+    # que ser el primero del fichero en importar el modulo.
     from tradingbot.web.app import app
 
     transport = httpx.ASGITransport(app=app)
@@ -120,3 +172,23 @@ async def test_cors_incluye_respuesta_de_auth_para_origen_permitido(monkeypatch)
 
     assert response.status_code == 401
     assert response.headers["access-control-allow-origin"] == "https://panel.example"
+
+
+@pytest.mark.anyio
+async def test_la_raiz_sirve_la_interfaz_sin_token(monkeypatch):
+    """El HTML es público (no lleva datos); AuthGate pide el token al cargar."""
+    monkeypatch.setenv("BOT_API_TOKEN", "correcto")
+
+    from tradingbot.web import app as module
+
+    transport = httpx.ASGITransport(app=module.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/")
+
+    if module.UI_DIR.is_dir():
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/html")
+    else:
+        # Sin compilar, el backend arranca igual y explica cómo compilarla.
+        assert response.status_code == 503
+        assert "npm run build" in response.json()["error"]

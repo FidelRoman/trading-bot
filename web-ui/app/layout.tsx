@@ -5,8 +5,8 @@ import AuthGate from "@/components/AuthGate";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "FX COMMAND CENTER — EUR/USD M15",
-  description: "Bot de trading EUR/USD con Bandas de Bollinger sobre FXCM",
+  title: "FX COMMAND CENTER — EUR/USD H1",
+  description: "Bot de trading EUR/USD con la estrategia FSRPPO sobre FXCM",
   icons: {
     icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230e1013'/%3E%3Cpath d='M16 5 27 16 16 27 5 16Z' fill='none' stroke='%239aa8f8' stroke-width='2.5'/%3E%3C/svg%3E",
   },

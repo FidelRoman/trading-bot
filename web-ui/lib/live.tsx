@@ -3,8 +3,8 @@
    con polling de respaldo cada 15 s. Los eventos de vela/backtest incrementan
    contadores de versión para que las páginas refresquen sus datos. */
 
-import React, { createContext, useContext, useEffect, useState } from "react";
-import { getJSON } from "./api";
+import React, { createContext, useContext, useEffect, useRef, useState } from "react";
+import { getJSON, wsProtocols, wsUrl } from "./api";
 import type { Position, Prices, Status } from "./types";
 
 interface LiveState {
@@ -31,6 +31,12 @@ const LiveContext = createContext<LiveState>({
   refreshStatus: async () => {},
 });
 
+/** El backend emite tres tipos de mensaje: status, tick y backtest. */
+type ServerMessage =
+  | { type: "status"; status: Status }
+  | { type: "tick"; prices: Prices; floating_pl: number; positions: Position[] }
+  | { type: "backtest"; [key: string]: unknown };
+
 export function LiveProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [prices, setPrices] = useState<Prices | null>(null);
@@ -41,47 +47,95 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
   const [logVersion, setLogVersion] = useState(0);
   const [wsConnected, setWsConnected] = useState(false);
 
-  const refreshStatus = async () => {
-    try {
-      const snapshot = await getJSON<{
-        status: Status;
-        prices: Prices | null;
-        positions: Position[];
-      }>("/api/snapshot");
-      const control = await getJSON<{ connection: "Demo" | "Real"; running: boolean }>("/api/account");
-      setStatus({
-        ...snapshot.status,
-        running: control.running,
-        paused: !control.running,
-        mode: snapshot.status.connected ? `fxcm-${control.connection.toLowerCase()}` : snapshot.status.mode,
-      });
-      setPrices(snapshot.prices);
-      setPositions(snapshot.positions ?? []);
-      setFloatingPl(
-        (snapshot.positions ?? []).reduce((total, position) => total + (position.gross_pl ?? 0), 0)
-      );
-      setWsConnected(true);
-    } catch {
-      /* backend caído: se reintenta en el siguiente ciclo */
-      setWsConnected(false);
+  // El backend no emite un evento por vela: se deduce de last_candle, que sí
+  // viaja en cada status. Un ref evita reabrir el socket al cambiar de vela.
+  const lastCandle = useRef<string | null>(null);
+
+  function applyStatus(next: Status) {
+    setStatus(next);
+    const candle = next.last_candle ?? null;
+    if (candle !== lastCandle.current) {
+      lastCandle.current = candle;
+      setCandleVersion((value) => value + 1);
+      setLogVersion((value) => value + 1);
     }
+  }
+
+  const refreshStatus = async () => {
+    const next = await getJSON<Status>("/api/status");
+    applyStatus(next);
   };
 
   useEffect(() => {
     let alive = true;
-    refreshStatus();
-    getJSON<Position[]>("/api/positions").then(setPositions).catch(() => {});
-    const poll = setInterval(() => {
-      refreshStatus().then(() => {
-        if (alive) {
-          setCandleVersion((value) => value + 1);
-          setLogVersion((value) => value + 1);
+    let socket: WebSocket | null = null;
+    let retry: ReturnType<typeof setTimeout> | null = null;
+
+    const poll = async () => {
+      try {
+        await refreshStatus();
+        const open = await getJSON<Position[]>("/api/positions");
+        if (!alive) return;
+        setPositions(open);
+        setFloatingPl(open.reduce((total, position) => total + (position.gross_pl ?? 0), 0));
+      } catch {
+        /* backend caído: se reintenta en el siguiente ciclo */
+      }
+    };
+
+    function connect() {
+      if (!alive) return;
+      try {
+        socket = new WebSocket(wsUrl(), wsProtocols());
+      } catch {
+        retry = setTimeout(connect, 5000);
+        return;
+      }
+
+      socket.onopen = () => alive && setWsConnected(true);
+
+      socket.onmessage = (event) => {
+        if (!alive) return;
+        let message: ServerMessage;
+        try {
+          message = JSON.parse(event.data);
+        } catch {
+          return;
         }
-      });
-    }, 60000);
+        if (message.type === "status") {
+          applyStatus(message.status);
+        } else if (message.type === "tick") {
+          setPrices(message.prices);
+          setPositions(message.positions ?? []);
+          setFloatingPl(message.floating_pl ?? 0);
+        } else if (message.type === "backtest") {
+          setBacktestVersion((value) => value + 1);
+        }
+      };
+
+      socket.onclose = () => {
+        if (!alive) return;
+        setWsConnected(false);
+        // El cierre por token inválido (1008) también reintenta: AuthGate ya
+        // habrá pedido credenciales nuevas para entonces.
+        retry = setTimeout(connect, 5000);
+      };
+
+      socket.onerror = () => socket?.close();
+    }
+
+    poll();
+    connect();
+    const backup = setInterval(poll, 15000);
+
     return () => {
       alive = false;
-      clearInterval(poll);
+      clearInterval(backup);
+      if (retry) clearTimeout(retry);
+      if (socket) {
+        socket.onclose = null;
+        socket.close();
+      }
     };
   }, []);
 
