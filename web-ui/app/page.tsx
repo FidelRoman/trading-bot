@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { SeriesMarker, Time } from "lightweight-charts";
 import { CandleChart } from "@/components/charts";
 import FsrppoPanel from "@/components/FsrppoPanel";
+import InstrumentPicker from "@/components/InstrumentPicker";
 import LogsPanel from "@/components/LogsPanel";
 import PositionsPanel from "@/components/PositionsPanel";
 import StrategyControls from "@/components/StrategyControls";
@@ -17,6 +18,9 @@ const TFS = ["m5", "m15", "h1", "h4"] as const;
 
 export default function Dashboard() {
   const { status, prices, floatingPl, candleVersion, wsConnected } = useLive();
+  // Decimales e instrumento vienen del status: la UI ya no asume EUR/USD.
+  const digits = status?.digits ?? 5;
+  const symbol = status?.instrument ?? "—";
   const [tf, setTf] = useState<string>("m15");
   const [candles, setCandles] = useState<Candle[]>([]);
   const [bands, setBands] = useState<Band[]>([]);
@@ -60,8 +64,8 @@ export default function Dashboard() {
         <div className="card">
           <div className="chart-head">
             <div className="pair">
-              <span className="pair-name">EUR/USD</span>
-              <span className="pair-price">{fmtPx(prices?.bid)}</span>
+              <span className="pair-name">{symbol}</span>
+              <span className="pair-price">{fmtPx(prices?.bid, digits)}</span>
               <span className={`live-tag${wsConnected ? "" : " off"}`}>
                 <span className="dot-live" />
                 {wsConnected ? "LIVE" : "RECONECTANDO…"}
@@ -81,8 +85,8 @@ export default function Dashboard() {
           </div>
           <CandleChart candles={candles} bands={bands} markers={markers} tall />
           <div className="chart-foot">
-            <span>BID <b>{fmtPx(prices?.bid)}</b></span>
-            <span>ASK <b>{fmtPx(prices?.ask)}</b></span>
+            <span>BID <b>{fmtPx(prices?.bid, digits)}</b></span>
+            <span>ASK <b>{fmtPx(prices?.ask, digits)}</b></span>
             <span>SPREAD <b>{fmt(prices?.spread_pips, 1)}</b> pips</span>
             <span>
               P&L FLOTANTE{" "}
@@ -94,6 +98,7 @@ export default function Dashboard() {
         <FsrppoPanel />
       </div>
       <div className="col-side">
+        <InstrumentPicker onAction={(m) => setPanelMsg(m)} />
         <div className="card" style={{ marginBottom: "16px", padding: "16px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ fontSize: "12px", fontWeight: "bold", color: "var(--text-muted)", letterSpacing: "1px" }}>
@@ -114,6 +119,9 @@ export default function Dashboard() {
                 cursor: "pointer",
               }}
             >
+              {/* FSRPPO gestiona posición neta y necesita un modelo activo
+                  entrenado para el instrumento seleccionado. */}
+              <option value="fsrppo">FSRPPO (posición neta)</option>
               <option value="bollinger">Reversión Bollinger</option>
               <option value="rsi">Estrategia RSI</option>
               <option value="wyckoff_1">Método Wyckoff 1</option>

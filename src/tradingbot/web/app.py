@@ -16,6 +16,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import Body, FastAPI, UploadFile, WebSocket, WebSocketDisconnect
@@ -64,31 +65,78 @@ class WsHub:
         return bool(self._clients)
 
 
-def _make_broker(settings, store=None):
-    """Bróker según el entorno.
+def execution_mode() -> str:
+    """``sim`` | ``live``, en orden creciente de consecuencias."""
+    if os.getenv("MOCK") == "1":
+        return "sim"
+    from ..config import load_settings
+    if not load_settings().fxcm.user:
+        return "sim"
+    return "live"
 
-    FSRPPO gestiona una posición neta, no operaciones con SL/TP, así que en modo
-    paper se envuelve la fuente de precios en un ``PaperBroker``: el mercado es
-    el real de FXCM y lo simulado es únicamente la ejecución. Es el alcance
-    acordado para esta versión — no se envían órdenes reales.
+
+def _selected_symbol(store=None) -> str:
+    """Instrumento elegido en la interfaz, o EUR/USD si no hay ninguno guardado."""
+    from ..config import INSTRUMENT, normalize_symbol
+
+    if store is None:
+        return INSTRUMENT
+    value = store.get_state("selected_instrument", None)
+    symbol = value.get("symbol") if isinstance(value, dict) else value
+    return normalize_symbol(symbol) if symbol else INSTRUMENT
+
+
+def _spec_for(symbol, store=None):
+    """Especificación del instrumento: catálogo descubierto o semilla.
+
+    Nunca lanza: un símbolo que no resuelve cae en la semilla de EUR/USD para no
+    impedir el arranque del backend.
     """
-    from ..paper_broker import PaperBroker
+    from ..config import DEFAULT_SPEC, get_instrument_spec
 
-    if os.getenv("MOCK") == "1" or not settings.fxcm.user:
-        log.warning("Sin credenciales FXCM (o MOCK=1): precios SIMULADOS, ejecución en papel")
-        return PaperBroker(
-            persisted_state=store.get_state("paper_broker", {}) if store else {},
-            state_callback=(lambda value: store.set_state("paper_broker", value)) if store else None,
+    catalog = store.get_state("instrument_catalog", None) if store else None
+    try:
+        return get_instrument_spec(symbol, catalog)
+    except ValueError:
+        log.warning("Sin especificación para %s; se usa la de %s",
+                    symbol, DEFAULT_SPEC.symbol)
+        return DEFAULT_SPEC
+
+
+def pause_if_real(engine, settings) -> bool:
+    if settings.fxcm.connection != "Real":
+        return False
+    pausado = False
+    if engine.running:
+        engine.pause()
+        pausado = True
+    engine.store.log("warn", "CUENTA REAL en modo LIVE: bot pausado al arrancar; "
+                             "actívalo a mano cuando quieras que opere")
+    return pausado
+
+
+def _make_broker(settings, store=None):
+    from ..mock import MockBroker
+
+    modo = execution_mode()
+    symbol = _selected_symbol(store)
+
+    if modo == "sim" or not settings.fxcm.user:
+        log.warning("Modo SIM sobre %s: precios simulados y ejecución en papel", symbol)
+        persisted = store.get_state("mock_broker", None) if store else None
+        if not persisted and store:
+            persisted = store.get_state("paper_broker", {})
+        return MockBroker(
+            persisted_state=persisted or {},
+            state_callback=(lambda value: store.set_state("mock_broker", value)) if store else None,
+            spec=_spec_for(symbol, store)
         )
 
     from ..broker import FxcmBroker
 
-    log.info("Precios reales de FXCM con ejecución en papel (no se envían órdenes)")
-    return PaperBroker(
-        price_source=FxcmBroker(settings.fxcm),
-        persisted_state=store.get_state("paper_broker", {}) if store else {},
-        state_callback=(lambda value: store.set_state("paper_broker", value)) if store else None,
-    )
+    log.warning("Modo LIVE sobre %s en cuenta %s: las órdenes son REALES",
+                symbol, settings.fxcm.connection)
+    return FxcmBroker(settings.fxcm, instrument=symbol)
 
 
 @asynccontextmanager
@@ -97,6 +145,8 @@ async def lifespan(app: FastAPI):
     store = Store(settings.db_path)
     broker = _make_broker(settings, store)
     engine = BotEngine(broker, store, settings)
+
+    pause_if_real(engine, settings)
     hub = WsHub()
 
     async def on_event(kind: str, data: dict) -> None:
@@ -313,6 +363,8 @@ async def get_credentials():
         except Exception:
             pass
     return {
+        "has_demo": bool(os.getenv("FXCM_USER_DEMO") and os.getenv("FXCM_PASS_DEMO")) or bool(os.getenv("FXCM_USER") and os.getenv("FXCM_PASS")),
+        "has_real": bool(os.getenv("FXCM_USER_REAL") and os.getenv("FXCM_PASS_REAL")),
         "user": os.getenv("FXCM_USER", ""),
         "has_password": bool(os.getenv("FXCM_PASS", "")),
         "connection": os.getenv("FXCM_CONNECTION", "Demo"),
@@ -326,9 +378,6 @@ async def get_credentials():
 
 @app.post("/api/credentials")
 async def set_credentials(payload: dict = Body(...)):
-    """Guarda credenciales en .env, valida con login real y hace swap del
-    bróker en caliente. connection="auto" prueba Demo y luego Real; si la
-    cuenta resulta ser REAL, el bot queda pausado automáticamente."""
     import os
 
     from ..broker import FxcmBroker
@@ -340,11 +389,20 @@ async def set_credentials(payload: dict = Body(...)):
     if connection not in ("auto", "Demo", "Real"):
         return {"ok": False, "error": "Conexión inválida"}
 
-    # Contraseña vacía = conservar la actual
-    if not password:
-        password = os.getenv("FXCM_PASS", "")
-    if not user or not password:
-        return {"ok": False, "error": "Usuario y contraseña son obligatorios"}
+    if not user and not password and connection in ("Demo", "Real"):
+        if connection == "Demo":
+            user = os.getenv("FXCM_USER_DEMO") or os.getenv("FXCM_USER", "")
+            password = os.getenv("FXCM_PASS_DEMO") or os.getenv("FXCM_PASS", "")
+        else:
+            user = os.getenv("FXCM_USER_REAL") or os.getenv("FXCM_USER", "")
+            password = os.getenv("FXCM_PASS_REAL") or os.getenv("FXCM_PASS", "")
+        if not user or not password:
+            return {"ok": False, "error": f"No hay credenciales guardadas para la cuenta {connection}"}
+    else:
+        if not password:
+            password = os.getenv("FXCM_PASS", "")
+        if not user or not password:
+            return {"ok": False, "error": "Usuario y contraseña son obligatorios"}
 
     url = os.getenv("FXCM_URL", "http://www.fxcorporate.com/Hosts.jsp")
     attempts = ["Demo", "Real"] if connection == "auto" else [connection]
@@ -364,10 +422,15 @@ async def set_credentials(payload: dict = Body(...)):
         return {"ok": False, "error": "Login fallido — " + " | ".join(errors)}
 
     # Persistir y hacer swap en caliente
-    update_env_file({"FXCM_USER": user, "FXCM_PASS": password, "FXCM_CONNECTION": used_connection})
-    os.environ.update(
-        {"FXCM_USER": user, "FXCM_PASS": password, "FXCM_CONNECTION": used_connection}
-    )
+    env_updates = {"FXCM_USER": user, "FXCM_PASS": password, "FXCM_CONNECTION": used_connection}
+    if used_connection == "Demo":
+        env_updates["FXCM_USER_DEMO"] = user
+        env_updates["FXCM_PASS_DEMO"] = password
+    elif used_connection == "Real":
+        env_updates["FXCM_USER_REAL"] = user
+        env_updates["FXCM_PASS_REAL"] = password
+    update_env_file(env_updates)
+    os.environ.update(env_updates)
 
     # Recargar configuración y re-crear store para el nuevo modo si cambió
     from ..config import load_settings
@@ -388,14 +451,24 @@ async def set_credentials(payload: dict = Body(...)):
         except Exception:
             pass
 
+    # El candidato solo sirvió para validar el login. El bróker definitivo se
+    # construye con _make_broker en vez de asignar el candidato pasa a ser el instrumento y la spec seleccionados.
     old = app.state.broker
-    app.state.broker = new_broker
-    app.state.engine.broker = new_broker
-    app.state.backtest.broker = new_broker
+    try:
+        await asyncio.to_thread(new_broker.disconnect)
+    except Exception:
+        pass
+    definitivo = _make_broker(new_settings, app.state.store)
+    await asyncio.to_thread(definitivo.connect)
+    app.state.broker = definitivo
+    app.state.engine.broker = definitivo
+    app.state.backtest.broker = definitivo
+    app.state.engine.reset_policy()
     try:
         await asyncio.to_thread(old.disconnect)
     except Exception:
         pass
+    new_broker = definitivo
 
     is_real = used_connection == "Real"
     if is_real:
@@ -585,6 +658,34 @@ async def training_datasets():
     return {"datasets": TrainingJob.available_datasets()}
 
 
+@app.post("/api/training/download")
+async def training_download(payload: dict = Body(...)):
+    """Descarga histórico de FXCM sin salir del navegador.
+
+    Va por la sesión ya autenticada del bróker (ver ``FxcmBroker.get_candles``),
+    así que solo funciona con el bot conectado a FXCM y nunca en modo simulado.
+    """
+    from ..config import normalize_symbol
+
+    broker = app.state.broker
+    if execution_mode() != "live":
+        return {"ok": False, "error": "En modo simulado no hay histórico real que descargar"}
+    if not getattr(broker, "connected", False):
+        return {"ok": False, "error": "El bróker no está conectado a FXCM"}
+
+    simbolo = normalize_symbol(str(payload.get("symbol") or _selected_symbol(app.state.store)))
+    timeframe = str(payload.get("timeframe", "h1")).lower()
+    if timeframe not in ("m1", "m5", "m15", "m30", "h1", "h4", "d1"):
+        return {"ok": False, "error": f"Timeframe no soportado: {timeframe}"}
+    # Diez años es el tope del script equivalente; más abajo de 1 no tiene sentido.
+    years = int(max(1, min(int(payload.get("years", 3)), 10)))
+
+    started = app.state.training.start_download(
+        broker=broker, symbol=simbolo, timeframe=timeframe, years=years,
+    )
+    return {"ok": started, "error": None if started else "Ya hay un trabajo en curso"}
+
+
 @app.post("/api/training/precompute")
 async def training_precompute(payload: dict = Body(...)):
     job: TrainingJob = app.state.training
@@ -603,7 +704,7 @@ async def training_start(payload: dict = Body(...)):
             "ok": False,
             "error": "Entrenamiento no disponible en la imagen del bot; usa el entorno completo",
         }
-    from ..config import PpoParams, get_instrument_spec
+    from ..config import PpoParams, normalize_symbol
     from ..rl.env import EnvParams
 
     job: TrainingJob = app.state.training
@@ -614,10 +715,16 @@ async def training_start(payload: dict = Body(...)):
         learning_rate=float(payload.get("learning_rate", PpoParams.learning_rate)),
         entropy_coef=float(payload.get("entropy_coef", PpoParams.entropy_coef)),
     )
+    # La ficha sale del catálogo descubierto en la cuenta, no solo de las cuatro
+    # semillas: sin esto no se puede entrenar un índice o una acción desde la web.
+    simbolo = normalize_symbol(str(payload.get("instrument") or _selected_symbol(app.state.store)))
+    catalogo = app.state.store.get_state("instrument_catalog", None)
     try:
-        instrument = get_instrument_spec(str(payload.get("instrument", "EUR/USD")))
+        from ..config import get_instrument_spec
+
+        instrument = get_instrument_spec(simbolo, catalogo)
     except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
+        return {"ok": False, "error": f"{exc}. Pulsa ACTUALIZAR en el selector de instrumentos."}
 
     spread = payload.get("spread_pips")
     default_max_units = 20_000 if instrument.min_lot >= 1_000 else 5
@@ -667,7 +774,7 @@ async def fsrppo_compare(payload: dict = Body(...)):
     from .training_job import TrainingJob
 
     registro = ModelRegistry()
-    run_id = payload.get("run_id") or registro.active_id()
+    run_id = payload.get("run_id") or registro.active_id(app.state.engine.symbol())
     if not run_id:
         return {"ok": False, "error": "No hay modelo indicado ni activo"}
 
@@ -700,33 +807,191 @@ async def fsrppo_compare(payload: dict = Body(...)):
 async def models_list():
     from ..rl.registry import ModelRegistry
 
+    from ..config import normalize_symbol
+
     registro = ModelRegistry()
-    activo = registro.active_id()
+    # Un activo por instrumento: `is_active` significa "activo para el suyo".
+    activos = registro.active_map()
+    simbolo = normalize_symbol(app.state.engine.symbol())
     return {
-        "active": activo,
+        "active": activos,
+        "active_for_current": activos.get(simbolo),
+        "current_instrument": simbolo,
         "models": [
-            {**registro_modelo.as_dict(), "is_active": registro_modelo.run_id == activo}
-            for registro_modelo in registro.list()
+            {
+                **modelo.as_dict(),
+                "is_active": activos.get(normalize_symbol(modelo.instrument)) == modelo.run_id,
+            }
+            for modelo in registro.list()
         ],
     }
 
 
-@app.get("/api/instruments")
-async def instruments_list():
-    from ..config import INSTRUMENTS
+def _seed_catalog() -> list[dict]:
+    """Especificaciones semilla, para cuando aún no se descubrió el catálogo."""
+    from ..config import INSTRUMENT_SEEDS
 
+    return [
+        {
+            "symbol": spec.symbol,
+            "pip": spec.pip,
+            "min_lot": spec.min_lot,
+            "lot_size": spec.lot_size,
+            "digits": spec.digits,
+            "asset_class": spec.asset_class,
+            "typical_spread_pips": spec.typical_spread_pips,
+            "quote_currency": spec.quote_currency,
+            "subscription_status": "T",
+            "tradable": True,
+        }
+        for spec in INSTRUMENT_SEEDS.values()
+    ]
+
+
+@app.get("/api/instruments")
+async def instruments_list(asset_class: str = "", q: str = "", tradable: int = 0):
+    """Universo descubierto de la cuenta FXCM; semillas si aún no hay catálogo."""
+    catalog = app.state.store.get_state("instrument_catalog", None) or {}
+    instruments = catalog.get("instruments") or _seed_catalog()
+    if asset_class:
+        instruments = [i for i in instruments if i.get("asset_class") == asset_class]
+    if q:
+        needle = q.strip().upper()
+        instruments = [i for i in instruments if needle in str(i.get("symbol", "")).upper()]
+    if tradable:
+        instruments = [i for i in instruments if i.get("tradable")]
     return {
-        "instruments": [
-            {
-                "symbol": spec.symbol,
-                "pip": spec.pip,
-                "min_lot": spec.min_lot,
-                "typical_spread_pips": spec.typical_spread_pips,
-                "quote_currency": spec.quote_currency,
-            }
-            for spec in INSTRUMENTS.values()
-        ]
+        "instruments": instruments,
+        "selected": _selected_symbol(app.state.store),
+        "updated_at": catalog.get("updated_at"),
+        "total": catalog.get("total", len(instruments)),
+        "truncated": catalog.get("truncated", False),
     }
+
+
+@app.get("/api/instrument")
+async def instrument_current():
+    """Instrumento activo, con lo que la interfaz necesita para etiquetar precios."""
+    broker = app.state.broker
+    spec = getattr(broker, "spec", None)
+    catalog = app.state.store.get_state("instrument_catalog", None) or {}
+    return {
+        "symbol": getattr(broker, "instrument", _selected_symbol(app.state.store)),
+        "asset_class": getattr(spec, "asset_class", "forex"),
+        "pip": getattr(spec, "pip", 0.0001),
+        "digits": getattr(spec, "digits", 5),
+        "min_lot": getattr(spec, "min_lot", 1000),
+        "lot_size": getattr(broker, "lot_size", getattr(spec, "lot_size", 100_000)),
+        "quote_currency": getattr(spec, "quote_currency", "USD"),
+        # El bróker simulado no tiene suscripción: se reporta "T" para que la
+        # interfaz no marque como no operable algo que sí puede simular.
+        "subscription_status": await asyncio.to_thread(
+            lambda: getattr(broker, "subscription_status", "T")),
+        "execution_mode": execution_mode(),
+        "connection": app.state.engine.s.fxcm.connection,
+        "catalog_updated_at": catalog.get("updated_at"),
+        "open_positions": len(await asyncio.to_thread(broker.open_trades)),
+        "running": app.state.engine.running,
+    }
+
+
+@app.post("/api/instrument")
+async def instrument_select(payload: dict = Body(...)):
+    """Cambia el instrumento que opera el bot y reconstruye el bróker.
+
+    Se niega con el bot iniciado o con posiciones abiertas: ``open_trades()``
+    filtra por instrumento, así que cambiarlo dejaría una posición invisible para
+    el motor, que nunca la cerraría.
+    """
+    from ..config import normalize_symbol
+
+    symbol = normalize_symbol(str(payload.get("symbol", "")))
+    if not symbol:
+        return {"ok": False, "error": "Indica el instrumento"}
+
+    store = app.state.store
+    catalog = store.get_state("instrument_catalog", None) or {}
+    conocidos = {str(i.get("symbol")) for i in (catalog.get("instruments") or _seed_catalog())}
+    if symbol not in conocidos:
+        return {"ok": False, "error": f"{symbol} no está en el catálogo de la cuenta"}
+
+    if app.state.engine.running:
+        return {"ok": False, "error": "Detén el bot antes de cambiar de instrumento"}
+    abiertas = await asyncio.to_thread(app.state.broker.open_trades)
+    if abiertas:
+        return {"ok": False, "error": "Cierra las posiciones abiertas antes de cambiar"}
+
+    store.set_state("selected_instrument", {
+        "symbol": symbol,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+    # La frontera de vela procesada es global: sin reiniciarla, el instrumento
+    # nuevo se saltaría la vela en curso.
+    store.set_state("last_processed_boundary", None)
+
+    old = app.state.broker
+    nuevo = _make_broker(load_settings(), store)
+    try:
+        await asyncio.to_thread(nuevo.connect)
+    except Exception as e:
+        return {"ok": False, "error": f"No se pudo conectar a {symbol}: {e}"}
+
+    app.state.broker = nuevo
+    app.state.engine.broker = nuevo
+    app.state.backtest.broker = nuevo
+    app.state.engine.reset_policy()
+    try:
+        await asyncio.to_thread(old.disconnect)
+    except Exception:
+        pass
+
+    spec = getattr(nuevo, "spec", None)
+    store.log("warn", f"Instrumento cambiado a {symbol}")
+    await app.state.hub.broadcast({"type": "status", "status": app.state.engine.status()})
+    return {
+        "ok": True,
+        "symbol": symbol,
+        "asset_class": getattr(spec, "asset_class", "forex"),
+        "digits": getattr(spec, "digits", 5),
+        # Solo "T" permite operar; la interfaz ofrece activarlo si no lo está.
+        "subscription_status": await asyncio.to_thread(
+            lambda: getattr(nuevo, "subscription_status", "T")),
+    }
+
+
+@app.post("/api/instruments/refresh")
+async def instruments_refresh():
+    """Relee la tabla OFFERS de FXCM y republica el catálogo."""
+    broker = app.state.broker
+    if not hasattr(broker, "instrument_catalog"):
+        return {"ok": False, "error": "El bróker simulado no tiene catálogo FXCM"}
+    try:
+        catalog = await asyncio.to_thread(broker.instrument_catalog)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    app.state.store.set_state("instrument_catalog", catalog)
+    app.state.store.log("info", f"Catálogo actualizado: {catalog.get('count')} instrumentos, "
+                                f"{catalog.get('tradable')} operables")
+    return {"ok": True, "count": catalog.get("count"), "tradable": catalog.get("tradable"),
+            "truncated": catalog.get("truncated")}
+
+
+@app.post("/api/instrument/subscribe")
+async def instrument_subscribe(payload: dict = Body(...)):
+    """Pone un instrumento en estado "T" para poder operarlo por API."""
+    from ..config import normalize_symbol
+
+    symbol = normalize_symbol(str(payload.get("symbol", ""))) or _selected_symbol(app.state.store)
+    broker = app.state.broker
+    if not hasattr(broker, "subscribe"):
+        return {"ok": False, "error": "El bróker actual no puede suscribir instrumentos"}
+    try:
+        result = await asyncio.to_thread(broker.subscribe, symbol)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    if symbol == getattr(broker, "instrument", None):
+        await asyncio.to_thread(broker.refresh_spec)
+    return {"ok": True, **result}
 
 
 @app.get("/api/selection/latest")
@@ -756,20 +1021,27 @@ async def model_activate(run_id: str):
     from ..rl.registry import ModelRegistry
 
     try:
-        ModelRegistry().activate(run_id)
+        instrumento = ModelRegistry().activate(run_id)
     except FileNotFoundError as exc:
         return {"ok": False, "error": str(exc)}
-    app.state.store.log("info", f"Modelo activo: {run_id}")
-    return {"ok": True, "active": run_id}
+    # El instrumento lo decide el modelo, no la pantalla desde la que se pulsó:
+    # la interfaz lo devuelve al usuario para que no crea que armó otra cosa.
+    app.state.store.log("info", f"Modelo activo para {instrumento}: {run_id}")
+    app.state.engine.reset_policy()
+    await app.state.hub.broadcast({"type": "status", "status": app.state.engine.status()})
+    return {"ok": True, "active": run_id, "instrument": instrumento}
 
 
 @app.post("/api/models/deactivate")
-async def model_deactivate():
+async def model_deactivate(payload: dict = Body(default={})):
     from ..rl.registry import ModelRegistry
 
-    ModelRegistry().deactivate()
-    app.state.store.log("warn", "Sin modelo activo: FSRPPO no operará")
-    return {"ok": True, "active": None}
+    instrumento = payload.get("instrument") or app.state.engine.symbol()
+    ModelRegistry().deactivate(instrumento)
+    app.state.store.log("warn", f"Sin modelo activo para {instrumento}: FSRPPO no operará")
+    app.state.engine.reset_policy()
+    await app.state.hub.broadcast({"type": "status", "status": app.state.engine.status()})
+    return {"ok": True, "active": None, "instrument": instrumento}
 
 
 @app.delete("/api/models/{run_id}")

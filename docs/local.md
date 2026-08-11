@@ -53,6 +53,20 @@ caffeinate -s uv run uvicorn tradingbot.web.app:app --port 8000 \
   --proxy-headers --forwarded-allow-ips="*"
 ```
 
+### Modo de ejecución
+
+El bot manda órdenes **reales** a la cuenta elegida en `FXCM_CONNECTION` (Demo o Real).
+Para probar la interfaz sin credenciales, arranca en modo simulado:
+
+```bash
+MOCK=1 uv run uvicorn tradingbot.web.app:app --port 8000
+```
+
+Con `FXCM_CONNECTION=Real`, el bot **arranca siempre
+pausado** y lo registra en el log: un reinicio del proceso no reabre operativa real
+sin que alguien pulse INICIAR. El panel muestra una banda roja «ÓRDENES REALES»
+cuando es el caso.
+
 - `caffeinate -s` impide que la Mac se duerma; el bot solo opera mientras el
   proceso esté vivo.
 - `--proxy-headers` es lo que hace que el backend vea el esquema y la IP reales
@@ -124,5 +138,8 @@ uv run python scripts/check_connection.py     # verifica el login FXCM
 3. El panel muestra precios que cambian cada 2 s (WebSocket vivo, no polling).
 4. Con el túnel abierto, la URL pide el token y luego muestra los mismos datos.
 5. La cuenta Real mueve dinero real: valida primero en Demo, usa límites de
-   riesgo pequeños y no dejes el bot iniciado sin supervisión. Al conectar una
-   cuenta Real el backend pausa el bot automáticamente.
+   riesgo pequeños y no dejes el bot iniciado sin supervisión. El backend pausa el
+   bot automáticamente tanto al conectar una cuenta Real desde el panel como al
+   arrancar con `EXECUTION_MODE=live` y `FXCM_CONNECTION=Real`.
+6. Para probar la interfaz sin credenciales y sin riesgo, arranca con
+   `MOCK=1` (modo simulado).

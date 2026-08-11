@@ -3,8 +3,9 @@ export const fmt = (n: number | null | undefined, d = 2): string =>
     ? "—"
     : Number(n).toLocaleString("es", { minimumFractionDigits: d, maximumFractionDigits: d });
 
-export const fmtPx = (n: number | null | undefined): string =>
-  n == null ? "—" : Number(n).toFixed(5);
+/** Precio con los decimales del instrumento: US30 no se muestra con 5. */
+export const fmtPx = (n: number | null | undefined, digits = 5): string =>
+  n == null ? "—" : Number(n).toFixed(Math.min(Math.max(digits, 0), 8));
 
 export const money = (n: number | null | undefined): string => (n == null ? "—" : "$" + fmt(n));
 

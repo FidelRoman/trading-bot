@@ -17,8 +17,7 @@ la política de posicionamiento sobre una señal de precio *denoised*.
 **Resultado esperado.** Un proyecto nuevo en `~/GitHub/trading-bot` que reutiliza toda la
 infraestructura ya probada (FastAPI + WebSocket, broker ForexConnect, store SQLite, UI Next.js 14) y
 añade el núcleo del paper: FSR (CEESMDAN + MRS), entorno de trading RL, PPO propio, registro de
-modelos y una pestaña de entrenamiento. **Alcance de ejecución: backtest + paper trading.** Sin
-órdenes reales ni a demo en esta versión.
+modelos y una pestaña de entrenamiento. **Alcance de ejecución: backtest + trading en cuentas Demo/Real.**
 
 ### Decisiones ya tomadas
 
@@ -26,7 +25,7 @@ modelos y una pestaña de entrenamiento. **Alcance de ejecución: backtest + pap
 |---|---|
 | Base de código | Fork de `trading-bot-obs` → `trading-bot` |
 | Mercado / timeframe | EUR/USD, **H1** por defecto (configurable) |
-| Ejecución | Backtest + paper trading interno |
+| Ejecución | Backtest + trading Demo/Real |
 | Stack RL | PyTorch + PPO propio (Algoritmo 1 del paper) |
 | Benchmarks | Se conservan Bollinger/RSI/Wyckoff + se añade Buy&Hold |
 | Instrumentos | Solo EUR/USD (arquitectura preparada para más) |
@@ -112,7 +111,6 @@ src/tradingbot/
     registry.py    modelos versionados en data/models/<run_id>/
     policy.py      carga de modelo + inferencia de una acción (para engine y backtest)
   metrics.py       CRR, ARR, AVR, MD, SPR, CR, STR (Tabla 2 del paper)
-  paper_broker.py  ejecución simulada con precios reales de FXCM (extiende mock.py)
   web/
     training_job.py  job de entrenamiento en hilo (mismo patrón que backtest_job.py)
 ```
@@ -186,7 +184,7 @@ Se conserva el shell actual (`Sidebar.tsx`, `Shell.tsx`, `lib/live.tsx` con WebS
 | 3 | Entorno y métricas | `rl/env.py`, `metrics.py` + tests de conservación de caja y de recompensa | 2 |
 | 4 | PPO | `networks.py`, `ppo.py`, `train.py`, `registry.py` + test de convergencia en entorno de juguete | 3 |
 | 5 | Backtest y comparativa | `run_fsrppo_backtest()`, `buy_and_hold()`, tabla de 7 métricas vs benchmarks | 2 |
-| 6 | Integración en el bot | `engine.py` modo fsrppo, `paper_broker.py`, endpoints nuevos | 2 |
+| 6 | Integración en el bot | `engine.py` modo fsrppo, `mock.py`, endpoints nuevos | 2 |
 | 7 | Interfaz | Páginas `/fsr`, `/train`, `/models`; dashboard y backtesting extendidos | 3 |
 | 8 | Validación | Entrenamiento train/test con 10 semillas, walk-forward, veredicto documentado | 2 |
 

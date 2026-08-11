@@ -15,7 +15,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from .config import PIP, StrategyParams
+from .config import DEFAULT_SPEC, InstrumentSpec, StrategyParams
 
 LONG = "long"
 SHORT = "short"
@@ -76,11 +76,15 @@ def add_indicators(df: pd.DataFrame, p: StrategyParams) -> pd.DataFrame:
     return out
 
 
-def compute_signals(df: pd.DataFrame, p: StrategyParams) -> pd.Series:
+def compute_signals(df: pd.DataFrame, p: StrategyParams,
+                    pip: float = DEFAULT_SPEC.pip) -> pd.Series:
     """Serie con LONG/SHORT/NaN por vela (vectorizado, para backtest).
 
     Bollinger: Largo si la anterior cerró bajo la banda inf y esta vuelve adentro.
     RSI: Largo si el RSI cruza hacia arriba de rsi_oversold.
+
+    ``pip`` es el del instrumento evaluado; solo interviene en el filtro de ancho
+    mínimo de banda de Bollinger.
     """
     d = df if "atr" in df.columns else add_indicators(df, p)
 
@@ -116,7 +120,7 @@ def compute_signals(df: pd.DataFrame, p: StrategyParams) -> pd.Series:
         short_sig = (prev_close > prev_upper) & (close < upper) & (close > d["bb_mid"])
 
         if p.min_band_width_pips > 0:
-            wide = (upper - lower) / PIP >= p.min_band_width_pips
+            wide = (upper - lower) / pip >= p.min_band_width_pips
             long_sig &= wide
             short_sig &= wide
 
@@ -126,10 +130,11 @@ def compute_signals(df: pd.DataFrame, p: StrategyParams) -> pd.Series:
     return out
 
 
-def latest_signal(df: pd.DataFrame, p: StrategyParams) -> Optional[Signal]:
+def latest_signal(df: pd.DataFrame, p: StrategyParams,
+                  pip: float = DEFAULT_SPEC.pip) -> Optional[Signal]:
     """Señal de la última vela cerrada del DataFrame, o None."""
     d = add_indicators(df, p)
-    sigs = compute_signals(d, p)
+    sigs = compute_signals(d, p, pip)
     side = sigs.iloc[-1]
     last = d.iloc[-1]
     if not isinstance(side, str) or math.isnan(last["atr"]):
@@ -185,18 +190,46 @@ def entry_allowed(ts: datetime) -> bool:
     return True
 
 
-def size_position(equity: float, risk_frac: float, stop_distance: float, min_lot: int) -> int:
+def size_position(equity: float, risk_frac: float, stop_distance: float, min_lot: int,
+                  contract_multiplier: float = 1.0) -> int:
     """Unidades a operar arriesgando ``risk_frac`` del equity con ese SL.
 
-    Para EUR/USD con cuenta en USD la pérdida al tocar SL es
-    ``units * stop_distance`` USD. Redondea hacia abajo a múltiplos de
-    ``min_lot``; devuelve 0 si el riesgo no alcanza ni para un micro-lote.
+    Con la cuenta en la divisa de cotización, la pérdida al tocar SL es
+    ``units * stop_distance * contract_multiplier``. El multiplicador es 1 en
+    divisas y en los CFD lineales; existe para los contratos cuyo nominal no es
+    una unidad de subyacente. Redondea hacia abajo a múltiplos de ``min_lot``;
+    devuelve 0 si el riesgo no alcanza ni para el mínimo operable.
     """
     if math.isnan(stop_distance) or math.isnan(risk_frac) or stop_distance <= 0 or equity <= 0 or risk_frac <= 0:
         return 0
-    units = (equity * risk_frac) / stop_distance
+    if contract_multiplier <= 0:
+        return 0
+    units = (equity * risk_frac) / (stop_distance * contract_multiplier)
     return int(units // min_lot) * min_lot
 
 
-def spread_ok(bid: float, ask: float, max_spread_pips: float) -> bool:
-    return (ask - bid) / PIP <= max_spread_pips
+def spread_bps(bid: float, ask: float) -> float:
+    """Spread relativo en puntos básicos del precio medio."""
+    mid = (ask + bid) / 2.0
+    if mid <= 0:
+        return float("inf")
+    return (ask - bid) / mid * 10_000.0
+
+
+def spread_ok(bid: float, ask: float, max_spread_pips: float,
+              max_spread_bps: float = float("inf"),
+              spec: Optional[InstrumentSpec] = None) -> bool:
+    """¿El spread es aceptable para entrar?
+
+    La puerta principal es **relativa** (bps del precio medio) porque un umbral
+    en pips absolutos solo tiene sentido dentro de un instrumento: los 1,5 pips
+    calibrados para EUR/USD vetan el 100% de las acciones y del oro. La puerta en
+    pips se mantiene **solo en divisas**, donde ya estaba afinada, para no
+    cambiar el comportamiento existente.
+    """
+    if spread_bps(bid, ask) > max_spread_bps:
+        return False
+    spec = spec or DEFAULT_SPEC
+    if spec.asset_class != "forex":
+        return True
+    return (ask - bid) / spec.pip <= max_spread_pips

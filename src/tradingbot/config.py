@@ -23,6 +23,14 @@ class InstrumentSpec:
     min_lot: int
     typical_spread_pips: float
     quote_currency: str = "USD"
+    # Fuera de divisas el pip, el lote y el redondeo de precio cambian: las
+    # acciones cotizan en unidades de 1 título y los índices llevan menos
+    # decimales. Ver tradingbot.instruments.
+    asset_class: str = "forex"
+    digits: int = 5
+    # Multiplicador de contrato: pérdida en el SL = units * distancia * este
+    # factor. 1 para divisas y CFD lineales cotizados en la divisa de la cuenta.
+    contract_multiplier: float = 1.0
 
     def __post_init__(self) -> None:
         if self.pip <= 0:
@@ -31,35 +39,93 @@ class InstrumentSpec:
             raise ValueError("min_lot debe ser positivo")
         if self.typical_spread_pips < 0:
             raise ValueError("typical_spread_pips no puede ser negativo")
+        if self.contract_multiplier <= 0:
+            raise ValueError("contract_multiplier debe ser positivo")
+
+    @property
+    def lot_size(self) -> int:
+        """Unidades por lote: 100.000 en divisas, el mínimo operable si no."""
+        return 100_000 if self.asset_class == "forex" else max(self.min_lot, 1)
 
 
-INSTRUMENTS: dict[str, InstrumentSpec] = {
+# Semilla de especificaciones conocidas. NO es una lista blanca: el universo real
+# lo descubre el worker de la tabla OFFERS de FXCM (ver tradingbot.instruments) y
+# se publica en el documento de estado ``instrument_catalog``. Estas entradas son
+# el respaldo para trabajar sin catálogo (tests, backtests, primer despliegue).
+INSTRUMENT_SEEDS: dict[str, InstrumentSpec] = {
     "EUR/USD": InstrumentSpec("EUR/USD", pip=0.0001, min_lot=1_000,
                               typical_spread_pips=1.2),
     "GBP/USD": InstrumentSpec("GBP/USD", pip=0.0001, min_lot=1_000,
                               typical_spread_pips=1.5),
     "USD/JPY": InstrumentSpec("USD/JPY", pip=0.01, min_lot=1_000,
-                              typical_spread_pips=1.2, quote_currency="JPY"),
+                              typical_spread_pips=1.2, quote_currency="JPY",
+                              digits=3),
     # FXCM permite dimensionar el oro en unidades, no en micro-lotes de 1.000.
     "XAU/USD": InstrumentSpec("XAU/USD", pip=0.01, min_lot=1,
-                              typical_spread_pips=35.0),
+                              typical_spread_pips=35.0, asset_class="bullion",
+                              digits=2),
 }
 
+#: Alias histórico. Se mantiene porque scripts y UI lo consumen por este nombre.
+INSTRUMENTS = INSTRUMENT_SEEDS
 
-def get_instrument_spec(symbol: str) -> InstrumentSpec:
-    """Devuelve una especificación aceptando mayúsculas/minúsculas y ``EURUSD``."""
-    normalizado = symbol.strip().upper()
-    if "/" not in normalizado and len(normalizado) == 6:
-        normalizado = f"{normalizado[:3]}/{normalizado[3:]}"
+#: Especificación por defecto cuando no hay bróker ni catálogo de los que leerla.
+DEFAULT_SPEC = INSTRUMENT_SEEDS[INSTRUMENT]
+
+
+#: Códigos ISO de las divisas que FXCM cotiza al contado, más los metales, que
+#: se comportan como divisa en la forma del símbolo. Sirve para decidir si un
+#: símbolo de 6 letras es un par (``EURUSD``) o un ticker (``SOYBN``).
+CURRENCY_CODES = frozenset((
+    "AUD", "CAD", "CHF", "CNH", "CZK", "DKK", "EUR", "GBP", "HKD", "HUF",
+    "ILS", "JPY", "MXN", "NOK", "NZD", "PLN", "RUB", "SEK", "SGD", "TRY",
+    "USD", "ZAR", "XAU", "XAG", "XPT", "XPD",
+))
+
+
+def normalize_symbol(symbol: str) -> str:
+    """Normaliza un símbolo sin imponer forma de par de divisas.
+
+    ``eurusd`` → ``EUR/USD`` (comodidad histórica), pero ``AAPL``, ``US30``,
+    ``NAS100`` o ``SOYBN`` se devuelven tal cual. La barra solo se inserta si las
+    dos mitades son códigos de divisa conocidos: si no, un ticker de seis letras
+    acabaría partido en dos (``AAPLUS`` → ``AAP/LUS``).
+    """
+    normalizado = str(symbol).strip().upper()
+    if "/" not in normalizado and len(normalizado) == 6 and normalizado.isalpha():
+        base, quote = normalizado[:3], normalizado[3:]
+        if base in CURRENCY_CODES and quote in CURRENCY_CODES:
+            return f"{base}/{quote}"
+    return normalizado
+
+
+def get_instrument_spec(symbol: str, catalog: dict | None = None) -> InstrumentSpec:
+    """Especificación de un instrumento: primero el catálogo, luego la semilla.
+
+    ``catalog`` es el documento ``instrument_catalog`` publicado por el worker.
+    Cuando se pasa, cualquier instrumento que la cuenta FXCM ofrezca es válido;
+    sin él solo resuelven las especificaciones semilla.
+    """
+    normalizado = normalize_symbol(symbol)
+    if catalog:
+        from .instruments import find_entry, spec_from_entry
+
+        entry = find_entry(catalog, normalizado)
+        if entry is not None:
+            return spec_from_entry(entry)
     try:
-        return INSTRUMENTS[normalizado]
+        return INSTRUMENT_SEEDS[normalizado]
     except KeyError as exc:
-        disponibles = ", ".join(INSTRUMENTS)
-        raise ValueError(f"instrumento desconocido {symbol!r}; disponibles: {disponibles}") from exc
+        disponibles = ", ".join(INSTRUMENT_SEEDS)
+        raise ValueError(
+            f"instrumento desconocido {symbol!r}; conocidos sin catálogo: {disponibles}"
+        ) from exc
 
 
-# Compatibilidad para las estrategias históricas. FSRPPO usa InstrumentSpec.
-PIP = INSTRUMENTS[INSTRUMENT].pip
+# Compatibilidad para los generadores sintéticos de backtest.py y mock.py, que
+# simulan explícitamente una serie tipo EUR/USD. El resto del código lee el pip
+# del InstrumentSpec activo: un global no puede representar varios instrumentos.
+PIP = DEFAULT_SPEC.pip
 
 
 @dataclass(frozen=True)
@@ -160,15 +226,32 @@ class RiskParams:
     daily_loss_limit: float = float(os.getenv("DAILY_LOSS_LIMIT", "0.03"))
     max_trades_per_day: int = int(os.getenv("MAX_TRADES_PER_DAY", "4"))
     max_spread_pips: float = float(os.getenv("MAX_SPREAD_PIPS", "1.5"))
+    # Puerta de spread independiente del activo. Un umbral en pips absolutos solo
+    # significa algo dentro de un instrumento: 1,5 pips veta el 100% de las
+    # acciones y del oro. 2 bps ≈ 1,5 pips de EUR/USD a 1,08, así que el
+    # comportamiento en divisas no cambia. Ver strategy.spread_ok.
+    max_spread_bps: float = float(os.getenv("MAX_SPREAD_BPS", "2.0"))
     min_lot: int = 1000  # micro-lote FXCM
 
 
+def _fxcm_user() -> str:
+    conn = os.getenv("FXCM_CONNECTION", "Demo")
+    if conn == "Demo":
+        return os.getenv("FXCM_USER_DEMO") or os.getenv("FXCM_USER", "")
+    return os.getenv("FXCM_USER_REAL") or os.getenv("FXCM_USER", "")
+
+def _fxcm_pass() -> str:
+    conn = os.getenv("FXCM_CONNECTION", "Demo")
+    if conn == "Demo":
+        return os.getenv("FXCM_PASS_DEMO") or os.getenv("FXCM_PASS", "")
+    return os.getenv("FXCM_PASS_REAL") or os.getenv("FXCM_PASS", "")
+
 @dataclass(frozen=True)
 class FxcmCredentials:
-    user: str = os.getenv("FXCM_USER", "")
-    password: str = os.getenv("FXCM_PASS", "")
-    connection: str = os.getenv("FXCM_CONNECTION", "Demo")
-    url: str = os.getenv("FXCM_URL", "http://www.fxcorporate.com/Hosts.jsp")
+    user: str = field(default_factory=_fxcm_user)
+    password: str = field(default_factory=_fxcm_pass)
+    connection: str = field(default_factory=lambda: os.getenv("FXCM_CONNECTION", "Demo"))
+    url: str = field(default_factory=lambda: os.getenv("FXCM_URL", "http://www.fxcorporate.com/Hosts.jsp"))
 
     def validate(self) -> None:
         if not self.user or not self.password:

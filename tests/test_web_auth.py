@@ -158,10 +158,15 @@ async def test_cors_incluye_respuesta_de_auth_para_origen_permitido(monkeypatch)
     monkeypatch.setenv("BOT_API_TOKEN", "correcto")
     monkeypatch.setenv("BOT_ALLOWED_ORIGINS", "https://panel.example")
 
-    # Importar aqui usa la aplicacion real y verifica el orden de middlewares.
-    # CORSMiddleware congela allow_origins en el import, asi que este test tiene
-    # que ser el primero del fichero en importar el modulo.
-    from tradingbot.web.app import app
+    # Usa la aplicacion real para verificar el orden de middlewares. CORSMiddleware
+    # congela allow_origins al construirse, asi que se recarga el modulo con la
+    # variable ya puesta: si no, el test dependeria de ser el primero en importar
+    # tradingbot.web.app en toda la sesion de pytest.
+    import importlib
+
+    import tradingbot.web.app as app_module
+
+    app = importlib.reload(app_module).app
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

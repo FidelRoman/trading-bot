@@ -31,6 +31,12 @@ export interface Status {
   halted_today: boolean;
   connected: boolean;
   mode: string;
+  /** true = las órdenes van de verdad a FXCM (ni sim ni papel). */
+  live_execution?: boolean;
+  instrument?: string;
+  asset_class?: string;
+  digits?: number;
+  lot_size?: number;
   active_strategy: string;
   account: {
     account_id?: string;
@@ -48,7 +54,11 @@ export interface Status {
   stats: Stats;
   last_candle: string | null;
   net_position?: number;
+  /** Modelo activo PARA EL INSTRUMENTO ACTUAL; hay uno por símbolo. */
   active_model?: string | null;
+  active_model_instrument?: string | null;
+  active_model_timeframe?: string | null;
+  active_model_info?: ActiveModelInfo | null;
   last_decision?: Decision | null;
 }
 
@@ -103,18 +113,35 @@ export interface TrainingCurvePoint {
 
 export interface TrainingState {
   status: "idle" | "running" | "done" | "error";
-  kind?: "training" | "precompute";
+  kind?: "training" | "precompute" | "download";
   note?: string;
   progress?: number;
   error?: string;
   run_id?: string;
   elapsed_s?: number;
   bars?: number;
+  /** Solo en kind="download": el CSV que quedó en data/history/. */
+  dataset?: string;
+  symbol?: string;
+  timeframe?: string;
+  first_bar?: string;
+  last_bar?: string;
   curve?: TrainingCurvePoint[];
   train_metrics?: PaperMetrics;
   test_metrics?: PaperMetrics;
   benchmark_metrics?: PaperMetrics;
   activated?: boolean;
+}
+
+/** Con qué se entrenó el modelo que está decidiendo ahora mismo. */
+export interface ActiveModelInfo {
+  created_at: string;
+  train_range: string[];
+  test_range: string[];
+  learning_rate?: number | null;
+  spread_pips?: number | null;
+  max_units?: number | null;
+  test_metrics?: PaperMetrics | null;
 }
 
 export interface ModelRecord {
@@ -140,6 +167,53 @@ export interface InstrumentSpec {
   min_lot: number;
   typical_spread_pips: number;
   quote_currency: string;
+  asset_class?: string;
+  digits?: number;
+}
+
+/** Entrada del catálogo que el worker descubre de la tabla OFFERS de FXCM. */
+export interface CatalogEntry {
+  symbol: string;
+  offer_id?: string;
+  asset_class: string;
+  digits: number;
+  pip: number;
+  min_lot: number;
+  lot_size: number;
+  quote_currency: string;
+  /** "T" = operable, "D" = deshabilitado, "V" = solo ver. */
+  subscription_status: string;
+  tradable: boolean;
+  typical_spread_pips?: number;
+}
+
+export interface InstrumentCatalog {
+  instruments: CatalogEntry[];
+  selected: string;
+  updated_at: string | null;
+  total: number;
+  truncated: boolean;
+}
+
+/** Instrumento activo tal y como lo reporta el worker en el snapshot. */
+export interface LiveInstrument {
+  symbol: string;
+  asset_class: string;
+  pip: number;
+  digits: number;
+  min_lot: number;
+  lot_size: number;
+  quote_currency: string;
+  subscription_status: string;
+}
+
+/** Respuesta de `GET /api/instrument`: el instrumento activo del bróker. */
+export interface CurrentInstrument extends LiveInstrument {
+  execution_mode: "sim" | "live";
+  connection: string;
+  catalog_updated_at: string | null;
+  open_positions: number;
+  running: boolean;
 }
 
 export interface MarketRankingRow {
@@ -225,6 +299,7 @@ export interface BotSettings {
   daily_loss_limit: number;
   max_trades_per_day: number;
   max_spread_pips: number;
+  max_spread_bps: number;
   fixed_units: number;
 }
 

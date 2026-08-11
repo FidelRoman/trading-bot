@@ -17,6 +17,8 @@ interface CredentialsState {
   is_real: boolean;
   account_id?: string | null;
   balance?: number | null;
+  has_demo_credentials?: boolean;
+  has_real_credentials?: boolean;
 }
 
 interface SaveResult {
@@ -85,11 +87,15 @@ export default function AccountCard() {
   return (
     <section className="card narrow mb" aria-labelledby="account-title">
       <div className="card-head">
-        <div className="card-title" id="account-title">CUENTA DE EJECUCIÓN</div>
+        <div className="card-title" id="account-title">CREDENCIALES</div>
         <span className={`chip ${saved?.is_real ? "real" : "ok"}`}>
           {saved?.is_real ? "CUENTA REAL" : saved?.connected ? "CUENTA DEMO" : "SIMULADO"}
         </span>
       </div>
+
+      <p className="hint" style={{ marginBottom: 14 }}>
+        Guardadas: <b>Demo</b> {saved?.has_demo_credentials ? "✓" : "✗"} · <b>Real</b> {saved?.has_real_credentials ? "✓" : "✗"}
+      </p>
 
       {liveAccount?.account_id && (
         <p className="hint" style={{ marginBottom: 14 }}>

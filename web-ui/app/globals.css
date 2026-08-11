@@ -425,3 +425,38 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
   background: none; border: none; padding: 0; cursor: pointer; text-align: left;
 }
 .linkish:hover { text-decoration: underline; }
+
+/* Hiperparámetros de un modelo entrenado (components/TrainingParams.tsx).
+   Rejilla que se adapta al ancho: en móvil cae a una columna sola. */
+.param-blocks {
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+.param-block {
+  border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px;
+  background: rgba(148, 163, 184, 0.04);
+}
+.param-block-title {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+  color: var(--dim); margin-bottom: 6px;
+}
+.param-grid { display: grid; gap: 4px; margin: 0; }
+.param-item { display: flex; justify-content: space-between; gap: 10px; }
+.param-item dt { font-size: 11px; color: var(--dim); }
+.param-item dd { font-family: var(--mono); font-size: 11px; margin: 0; color: var(--text); }
+
+/* Aviso del selector de instrumento (components/InstrumentPicker.tsx). El
+   bloqueo por posiciones abiertas era una línea gris de 11px al final de la
+   tarjeta: nadie la veía y el desplegable parecía roto sin motivo. */
+.picker-blocked, .picker-warn {
+  font-size: 11px; line-height: 1.5; border-radius: 6px;
+  padding: 7px 10px; margin-bottom: 8px;
+}
+.picker-blocked {
+  color: var(--red); background: rgba(248, 113, 113, .08);
+  border: 1px solid rgba(248, 113, 113, .35);
+}
+.picker-warn {
+  color: var(--yellow, #fbbf24); background: rgba(251, 191, 36, .08);
+  border: 1px solid rgba(251, 191, 36, .3);
+}

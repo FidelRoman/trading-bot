@@ -15,7 +15,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from .config import PIP, RiskParams, StrategyParams
+from .config import DEFAULT_SPEC, InstrumentSpec, RiskParams, StrategyParams
 from .strategy import (
     LONG,
     SHORT,
@@ -72,9 +72,13 @@ def run_backtest(
     initial_equity: float = 10_000.0,
     spread_pips: float = 1.2,
     fixed_units: int = 0,
+    spec: InstrumentSpec = DEFAULT_SPEC,
 ) -> BacktestResult:
+    # El pip y el mínimo operable son del instrumento backtesteado: con el pip de
+    # EUR/USD, el coste de spread de un índice o una acción sale con la escala mal.
+    pip = spec.pip
     d = add_indicators(df, strategy_params)
-    signals = compute_signals(d, strategy_params)
+    signals = compute_signals(d, strategy_params, pip)
 
     equity = initial_equity
     trades: list[BtTrade] = []
@@ -85,7 +89,7 @@ def run_backtest(
     day = None
     day_start_equity = equity
     day_trades = 0
-    spread_cost_price = spread_pips * PIP
+    spread_cost_price = spread_pips * pip
 
     rows = d.itertuples()
     idx = d.index
@@ -117,7 +121,7 @@ def run_backtest(
                 direction = 1 if pos["side"] == LONG else -1
                 pnl = direction * (exit_price - pos["entry"]) * pos["units"]
                 pnl -= spread_cost_price * pos["units"]
-                pips = direction * (exit_price - pos["entry"]) / PIP - spread_pips
+                pips = direction * (exit_price - pos["entry"]) / pip - spread_pips
                 equity += pnl
                 trades.append(
                     BtTrade(
@@ -200,7 +204,7 @@ def run_backtest(
                 exit=last_close,
                 units=pos["units"],
                 pnl=pnl,
-                pips=direction * (last_close - pos["entry"]) / PIP - spread_pips,
+                pips=direction * (last_close - pos["entry"]) / pip - spread_pips,
                 reason="end",
             )
         )

@@ -5,7 +5,7 @@ Bot de trading para EUR/USD que implementa la estrategia **FSRPPO** del paper
 financial signal representation"* (Lin Wang, Xuerui Wang — *Engineering Applications
 of Artificial Intelligence* 138 (2024) 109365), con dashboard web en tiempo real.
 
-Alcance actual: **backtest y paper trading**. No envía órdenes reales.
+Alcance actual: **backtest y trading en cuentas Demo/Real**. Envía órdenes reales.
 
 Plan de implementación completo y decisiones de diseño: [`PLAN.md`](PLAN.md).
 

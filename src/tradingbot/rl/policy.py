@@ -99,10 +99,15 @@ class FsrppoPolicy:
         return cls(agent, fsr, env, run_id)
 
     @classmethod
-    def load_active(cls, registry: ModelRegistry | None = None) -> "FsrppoPolicy | None":
-        """Política del modelo marcado como activo, o ``None`` si no hay ninguno."""
+    def load_active(cls, registry: ModelRegistry | None = None,
+                    instrument: str | None = None) -> "FsrppoPolicy | None":
+        """Política activa para ``instrument``, o ``None`` si no hay ninguna.
+
+        Sin instrumento se resuelve el activo único, que es lo que quieren los
+        scripts y los tests cuando solo hay un modelo en juego.
+        """
         reg = registry or ModelRegistry()
-        run_id = reg.active_id()
+        run_id = reg.active_id(instrument)
         if not run_id:
             return None
         try:

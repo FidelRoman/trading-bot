@@ -26,12 +26,18 @@ export function metricText(value: number | null | undefined, kind: "pct" | "num"
   return kind === "pct" ? `${(value * 100).toFixed(2)}%` : value.toFixed(3);
 }
 
-/** Cabecera de la tabla de métricas del paper. */
-export function MetricsHead({ first = "ESTRATEGIA", extra }: { first?: string; extra?: string[] }) {
+/** Cabecera de la tabla de métricas del paper.
+ *
+ *  `lead` son columnas propias de quien la usa que van **antes** de las métricas
+ *  (la pestaña de modelos pone ahí instrumento y timeframe); `extra`, las que van
+ *  después. Ambas opcionales para no tocar al resto de tablas. */
+export function MetricsHead({ first = "ESTRATEGIA", lead, extra }:
+  { first?: string; lead?: string[]; extra?: string[] }) {
   return (
     <thead>
       <tr>
         <th>{first}</th>
+        {lead?.map((e) => <th key={e}>{e}</th>)}
         {METRIC_COLUMNS.map((c) => (
           <th key={c.key as string} title={c.title}>
             {c.label}
@@ -48,18 +54,21 @@ export function MetricsRow({
   name,
   metrics,
   reference,
+  lead,
   extra,
   highlight = false,
 }: {
   name: React.ReactNode;
   metrics?: PaperMetrics;
   reference?: PaperMetrics;
+  lead?: React.ReactNode[];
   extra?: React.ReactNode[];
   highlight?: boolean;
 }) {
   return (
     <tr style={highlight ? { background: "rgba(74,222,128,.06)" } : undefined}>
       <td>{name}</td>
+      {lead?.map((e, i) => <td key={`lead-${i}`}>{e}</td>)}
       {METRIC_COLUMNS.map((c) => {
         const value = metrics?.[c.key] as number | null | undefined;
         const base = reference?.[c.key] as number | null | undefined;

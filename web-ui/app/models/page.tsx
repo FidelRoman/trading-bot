@@ -7,6 +7,7 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { apiFetch, getJSON, postJSON } from "@/lib/api";
 import { MetricsHead, MetricsRow } from "@/components/metrics";
+import TrainingParams from "@/components/TrainingParams";
 import { isoShort } from "@/lib/format";
 import { useLive } from "@/lib/live";
 import type {
@@ -34,7 +35,9 @@ interface Comparativa {
 export default function ModelsPage() {
   const { refreshStatus } = useLive();
   const [modelos, setModelos] = useState<ModelRecord[]>([]);
-  const [activo, setActivo] = useState<string | null>(null);
+  // Un activo por instrumento: el mapa símbolo → run_id que devuelve la API.
+  const [activos, setActivos] = useState<Record<string, string>>({});
+  const [instrumentoActual, setInstrumentoActual] = useState<string | null>(null);
   const [detalle, setDetalle] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [comparativa, setComparativa] = useState<Comparativa | null>(null);
@@ -47,9 +50,14 @@ export default function ModelsPage() {
 
   const cargar = useCallback(async () => {
     try {
-      const r = await getJSON<{ active: string | null; models: ModelRecord[] }>("/api/models");
+      const r = await getJSON<{
+        active: Record<string, string>;
+        current_instrument?: string;
+        models: ModelRecord[];
+      }>("/api/models");
       setModelos(r.models);
-      setActivo(r.active);
+      setActivos(r.active ?? {});
+      setInstrumentoActual(r.current_instrument ?? null);
     } catch {
       setModelos([]);
     }
@@ -73,17 +81,24 @@ export default function ModelsPage() {
   const rankingVisible = (seleccion?.ranking ?? []).filter(
     (row) => instrumento === "all" || row.symbol === instrumento
   );
+  const parejasActivas = Object.entries(activos).filter(
+    ([simbolo]) => instrumento === "all" || simbolo === instrumento
+  );
 
   const activar = async (runId: string) => {
-    const r = await postJSON<{ ok: boolean; error?: string }>(`/api/models/${runId}/activate`);
-    setAviso(r.ok ? `Modelo activo: ${runId}` : r.error ?? "No se pudo activar");
+    const r = await postJSON<{ ok: boolean; error?: string; instrument?: string }>(
+      `/api/models/${runId}/activate`
+    );
+    // El instrumento lo decide el modelo, no el filtro que esté puesto: si no se
+    // dijera, activar desde "Todos" parecería haber armado el símbolo en pantalla.
+    setAviso(r.ok ? `Modelo activo para ${r.instrument}: ${runId}` : r.error ?? "No se pudo activar");
     await cargar();
     await refreshStatus();
   };
 
-  const desactivar = async () => {
-    await postJSON("/api/models/deactivate");
-    setAviso("Sin modelo activo: FSRPPO no operará");
+  const desactivar = async (simbolo: string) => {
+    await postJSON("/api/models/deactivate", { instrument: simbolo });
+    setAviso(`Sin modelo activo para ${simbolo}: FSRPPO no operará ese instrumento`);
     await cargar();
     await refreshStatus();
   };
@@ -147,22 +162,60 @@ export default function ModelsPage() {
           <div className="m-val">{modelosVisibles.length}</div>
         </div>
         <div className="metric-card">
-          <div className="m-lbl">ACTIVO</div>
-          <div className="m-val" style={{ fontSize: 14 }}>{activo ?? "ninguno"}</div>
+          <div className="m-lbl">INSTRUMENTOS ARMADOS</div>
+          <div className="m-val">{parejasActivas.length}</div>
         </div>
       </div>
 
       <div className="card">
         <div className="card-head">
+          <div className="card-title">★ ACTIVO POR INSTRUMENTO</div>
+        </div>
+        {parejasActivas.length === 0 ? (
+          <div className="empty">
+            Ningún instrumento tiene modelo activo: FSRPPO no operará.
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr><th>INSTRUMENTO</th><th>MODELO ACTIVO</th><th>ACCIONES</th></tr>
+              </thead>
+              <tbody>
+                {parejasActivas.map(([simbolo, runId]) => (
+                  <tr key={simbolo} className={simbolo === instrumentoActual ? "ranking-winner" : ""}>
+                    <td>
+                      {simbolo === instrumentoActual ? "▶ " : ""}{simbolo}
+                      {simbolo === instrumentoActual && (
+                        <span className="hint"> · el que opera el bot</span>
+                      )}
+                    </td>
+                    <td>{runId}</td>
+                    <td>
+                      <button className="btn" onClick={() => desactivar(simbolo)}>DESACTIVAR</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="card-head">
           <div className="card-title">⧉ MODELOS ENTRENADOS</div>
-          {activo && <button className="btn" onClick={desactivar}>DESACTIVAR</button>}
         </div>
 
         {aviso && <div className="hint" style={{ padding: "6px 12px" }}>{aviso}</div>}
 
         <div className="table-wrap">
           <table>
-            <MetricsHead first="MODELO (TEST)" extra={["OPS", "ACCIONES"]} />
+            <MetricsHead
+              first="MODELO (TEST)"
+              lead={["INSTRUMENTO", "TF"]}
+              extra={["OPS", "ACCIONES"]}
+            />
             <tbody>
               {modelosVisibles.map((m) => (
                 <Fragment key={m.run_id}>
@@ -179,6 +232,7 @@ export default function ModelsPage() {
                     metrics={m.test_metrics}
                     reference={m.benchmark_metrics}
                     highlight={!!m.is_active}
+                    lead={[m.instrument, m.timeframe?.toUpperCase() ?? "—"]}
                     extra={[
                       m.test_metrics?.trades ?? "—",
                       <span key="a" style={{ display: "flex", gap: 6 }}>
@@ -199,13 +253,13 @@ export default function ModelsPage() {
                   />
                   {detalle === m.run_id && (
                     <tr>
-                      <td colSpan={10} style={{ background: "rgba(148,163,184,.05)" }}>
+                      <td colSpan={12} style={{ background: "rgba(148,163,184,.05)" }}>
                         <div style={{ display: "grid", gap: 10, padding: "8px 4px" }}>
                           <div className="hint">
-                            Entrenado {isoShort(m.created_at)} · {m.instrument} {m.timeframe} ·
-                            train {m.train_range[0]?.slice(0, 10)} → {m.train_range[1]?.slice(0, 10)} ·
-                            test {m.test_range[0]?.slice(0, 10)} → {m.test_range[1]?.slice(0, 10)}
+                            Entrenado {isoShort(m.created_at)}
+                            {m.is_active && " · ACTIVO para su instrumento"}
                           </div>
+                          <TrainingParams model={m} />
                           <table>
                             <MetricsHead first="TRAMO" />
                             <tbody>
@@ -218,12 +272,6 @@ export default function ModelsPage() {
                             Una diferencia grande entre train y test es sobreajuste:
                             el modelo recuerda el pasado en vez de haber aprendido algo.
                           </div>
-                          <details>
-                            <summary className="hint">Hiperparámetros</summary>
-                            <pre style={{ fontSize: 11, overflowX: "auto" }}>
-{JSON.stringify({ fsr: m.fsr_params, ppo: m.ppo_params, env: m.env_params }, null, 2)}
-                            </pre>
-                          </details>
                         </div>
                       </td>
                     </tr>

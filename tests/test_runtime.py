@@ -3,13 +3,13 @@ from datetime import datetime, timezone
 
 from tradingbot.config import load_settings
 from tradingbot.engine import BotEngine
-from tradingbot.paper_broker import PaperBroker
+from tradingbot.mock import MockBroker
 from tradingbot.store import Store
 
 
-def test_paper_broker_restaura_y_persiste_su_posicion():
+def test_mock_restaura_y_persiste_su_posicion():
     saved = []
-    broker = PaperBroker(
+    broker = MockBroker(
         persisted_state={"equity": 9_900.0, "position": 1000, "entry_price": 1.0},
         state_callback=saved.append,
     )

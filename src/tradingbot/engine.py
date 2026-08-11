@@ -13,7 +13,7 @@ import time as _time
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable, Optional
 
-from .config import PIP, RiskParams, Settings, StrategyParams
+from .config import DEFAULT_SPEC, InstrumentSpec, RiskParams, Settings, StrategyParams
 from .store import Store
 from .strategy import entry_allowed, latest_signal, size_position, spread_ok
 
@@ -35,7 +35,8 @@ SETTING_BOUNDS = {
     "risk_per_trade": (0.001, 0.02, float),
     "daily_loss_limit": (0.01, 0.10, float),
     "max_trades_per_day": (1, 20, int),
-    "max_spread_pips": (0.5, 5.0, float),
+    "max_spread_pips": (0.5, 5.0, float),      # solo divisas
+    "max_spread_bps": (0.1, 100.0, float),     # puerta relativa, cualquier activo
     "fixed_units": (0, 500_000, int),  # 0 = tamaño automático por riesgo
 }
 
@@ -76,7 +77,13 @@ class BotEngine:
         self._last_processed: Optional[datetime] = None
         self._last_equity_snap = 0.0
         self._policy = None
+        # Clave de la política cacheada: (símbolo, run_id). El símbolo entra en la
+        # clave porque el activo depende del instrumento, no solo del modelo.
+        self._policy_key: Optional[tuple] = None
         self._policy_run_id: Optional[str] = None
+        # Instrumento con el que se entrenó el modelo activo. Se compara con el
+        # del bróker en cada tick para no operar un activo con la política de otro.
+        self._policy_instrument: Optional[str] = None
         self._run_once_lock = asyncio.Lock()
         self.on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None
         if self.store.get_state("running") is None:
@@ -99,6 +106,17 @@ class BotEngine:
 
     def stop(self) -> None:
         self._stop = True
+
+    def reset_policy(self) -> None:
+        """Olvida la política cacheada: se recarga en el próximo tick.
+
+        Se llama al cambiar de bróker o de instrumento, para que el modelo activo
+        se vuelva a validar contra el instrumento nuevo.
+        """
+        self._policy = None
+        self._policy_key = None
+        self._policy_run_id = None
+        self._policy_instrument = None
 
     # -- ajustes en runtime (editables desde la web) -----------------------
 
@@ -130,6 +148,7 @@ class BotEngine:
             daily_loss_limit=float(o.get("daily_loss_limit", b.daily_loss_limit)),
             max_trades_per_day=int(o.get("max_trades_per_day", b.max_trades_per_day)),
             max_spread_pips=float(o.get("max_spread_pips", b.max_spread_pips)),
+            max_spread_bps=float(o.get("max_spread_bps", b.max_spread_bps)),
             min_lot=b.min_lot,
         )
 
@@ -153,6 +172,7 @@ class BotEngine:
             "daily_loss_limit": rp.daily_loss_limit,
             "max_trades_per_day": rp.max_trades_per_day,
             "max_spread_pips": rp.max_spread_pips,
+            "max_spread_bps": rp.max_spread_bps,
             "fixed_units": int(self._overrides().get("fixed_units", 0)),
         }
 
@@ -181,17 +201,38 @@ class BotEngine:
         self.store.log("info", "Ajustes actualizados desde la interfaz")
         return self.current_settings()
 
+    # -- instrumento activo -------------------------------------------------
+
+    def spec(self) -> InstrumentSpec:
+        """Especificación del instrumento que opera el bróker.
+
+        El pip, el lote y los decimales dependen del instrumento, así que se leen
+        de aquí y nunca de una constante de módulo. Los brókers de papel y los
+        dobles de test que no la expongan caen en la de EUR/USD.
+        """
+        return getattr(self.broker, "spec", None) or DEFAULT_SPEC
+
+    def symbol(self) -> str:
+        return str(getattr(self.broker, "instrument", DEFAULT_SPEC.symbol))
+
     # -- órdenes manuales ---------------------------------------------------
 
     def manual_order(self, side: str, lots: float, sl_pips: float, tp_pips: float) -> dict:
-        """Orden manual desde la UI. 1 lote = 100k unidades (0.10 = 10k)."""
+        """Orden manual desde la UI.
+
+        En divisas 1 lote = 100.000 unidades; fuera de divisas el lote lo define
+        el bróker (1 acción, 1 contrato), así que la conversión se delega en él.
+        """
         if side not in ("long", "short"):
             return {"ok": False, "error": "Dirección inválida"}
         if self.store.current_open_trade() is not None:
             return {"ok": False, "error": "Ya hay una posición del bot abierta"}
-        if sl_pips <= 0 or tp_pips <= 0:
-            return {"ok": False, "error": "SL y TP deben ser mayores que 0"}
-        units = self.broker.normalize_units(int(lots * 100_000))
+        if sl_pips < 0 or tp_pips < 0:
+            return {"ok": False, "error": "SL y TP no pueden ser negativos"}
+        if hasattr(self.broker, "units_for_lots"):
+            units = self.broker.units_for_lots(lots)
+        else:
+            units = self.broker.normalize_units(int(round(lots * self.spec().lot_size)))
         if units <= 0:
             return {"ok": False, "error": "Lote demasiado pequeño (mínimo 0.01)"}
         try:
@@ -202,8 +243,8 @@ class BotEngine:
         self.store.open_trade(order_id, side, units)
         self.store.log(
             "warn",
-            f"ORDEN MANUAL {('COMPRA' if side == 'long' else 'VENTA')} {units} EUR/USD "
-            f"— SL {sl_pips:.1f} / TP {tp_pips:.1f} pips (orden {order_id})",
+            f"ORDEN MANUAL {('COMPRA' if side == 'long' else 'VENTA')} {units} {self.symbol()} "
+            f"— SL {sl_pips:.1f} / TP {tp_pips:.1f} pips (orden {order_id})" if sl_pips > 0 or tp_pips > 0 else f"— sin SL/TP (orden {order_id})",
         )
         return {"ok": True, "order_id": order_id, "units": units}
 
@@ -313,7 +354,7 @@ class BotEngine:
             info = self.broker.closed_trade_info(rec["trade_id"])
         if info:
             direction = 1 if rec["side"] == "long" else -1
-            pips = direction * (info["close_rate"] - (rec["entry_rate"] or info["close_rate"])) / PIP
+            pips = direction * (info["close_rate"] - (rec["entry_rate"] or info["close_rate"])) / self.spec().pip
             if self.store.get_state("manual_close") == rec["trade_id"]:
                 reason = "manual"
                 self.store.set_state("manual_close", None)
@@ -349,7 +390,8 @@ class BotEngine:
         if candles.empty or len(candles) < warmup:
             return
 
-        sig = latest_signal(candles, sp)
+        spec = self.spec()
+        sig = latest_signal(candles, sp, spec.pip)
         if sig is None:
             return
         self.store.log("info", f"Señal {sig.side.upper()} @ {sig.ref_close:.5f}")
@@ -368,7 +410,8 @@ class BotEngine:
             return
 
         prices = self.broker.current_prices()
-        if not spread_ok(prices["bid"], prices["ask"], rp.max_spread_pips):
+        if not spread_ok(prices["bid"], prices["ask"], rp.max_spread_pips,
+                         rp.max_spread_bps, spec):
             self.store.log("warn", f"Señal ignorada: spread {prices['spread_pips']} pips")
             return
 
@@ -387,33 +430,86 @@ class BotEngine:
         if fixed > 0:
             units = fixed
         else:
-            units = size_position(equity, rp.risk_per_trade, sig.stop_distance, rp.min_lot)
+            # El mínimo operable lo manda el instrumento (1.000 en micro-lotes FX,
+            # 1 en acciones y oro), no la constante FX de RiskParams.min_lot, que
+            # redondearía cualquier acción a 1.000 títulos.
+            units = size_position(equity, rp.risk_per_trade, sig.stop_distance,
+                                  max(spec.min_lot, 1), spec.contract_multiplier)
         units = self.broker.normalize_units(units)
         if units <= 0:
             self.store.log("warn", "Señal ignorada: tamaño calculado 0 (equity/SL)")
             return
 
-        stop_pips = sig.stop_distance / PIP
+        stop_pips = sig.stop_distance / spec.pip
         order_id = self.broker.open_position(sig.side, units, stop_pips, sig.take_profit)
         self.store.open_trade(order_id, sig.side, units)
         self.store.log(
             "info",
-            f"ORDEN {sig.side.upper()} {units} EUR/USD — SL {stop_pips:.1f} pips, "
-            f"TP {sig.take_profit:.5f} (orden {order_id})",
+            f"ORDEN {sig.side.upper()} {units} {self.symbol()} — SL {stop_pips:.1f} pips, "
+            f"TP {sig.take_profit:.{spec.digits}f} (orden {order_id})",
         )
 
     # -- decisión por vela: FSRPPO -----------------------------------------
 
+    def active_model_id(self) -> Optional[str]:
+        """``run_id`` activo para el instrumento que opera el bróker.
+
+        Se resuelve leyendo el registro, no la caché de ``policy()``: esa solo se
+        rellena al cierre de vela, y la interfaz pregunta por el modelo activo
+        justo después de cambiar de instrumento, cuando aún no ha habido tick.
+        """
+        from .rl.registry import ModelRegistry
+
+        try:
+            return ModelRegistry().active_id(self.symbol())
+        except Exception:
+            return None
+
     def policy(self):
-        """Política del modelo activo, recargada si el modelo activo cambia."""
+        """Política del modelo activo para el instrumento actual.
+
+        El registro guarda un activo por instrumento, así que cambiar de símbolo
+        cambia de modelo en vez de desarmar el bot.
+        """
         from .rl.policy import FsrppoPolicy
         from .rl.registry import ModelRegistry
 
-        activo = ModelRegistry().active_id()
-        if activo != self._policy_run_id:
-            self._policy = FsrppoPolicy.load_active() if activo else None
+        registry = ModelRegistry()
+        simbolo = self.symbol()
+        activo = registry.active_id(simbolo)
+        # La clave lleva el símbolo: el mismo run_id sobre otro instrumento es
+        # una situación distinta y no puede reutilizar la política cacheada.
+        clave = (simbolo, activo)
+        if clave != self._policy_key:
+            self._policy = FsrppoPolicy.load_active(registry, simbolo) if activo else None
+            self._policy_key = clave
             self._policy_run_id = activo
+            self._policy_instrument = self._model_instrument(registry, activo)
+        if self._policy is None:
+            return None
+        # Defensa por si el mapa y el meta.json discrepan (un active.json editado
+        # a mano, una carpeta renombrada): dimensionar con la ficha de un
+        # instrumento y ejecutar en otro es el fallo que no se puede permitir.
+        entrenado = self._policy_instrument
+        if entrenado and entrenado != simbolo:
+            self.store.log(
+                "error",
+                f"FSRPPO desactivado: el modelo activo se entrenó en {entrenado} "
+                f"y el bróker opera {simbolo}",
+            )
+            return None
         return self._policy
+
+    @staticmethod
+    def _model_instrument(registry, run_id: Optional[str]) -> Optional[str]:
+        """Instrumento con el que se entrenó el modelo activo, si se conoce."""
+        if not run_id:
+            return None
+        try:
+            record = registry.get(run_id)
+        except Exception:
+            return None
+        return getattr(record, "instrument", None) if record is not None else None
 
     def _fsrppo_tick(self, candles, rp: RiskParams, now: datetime) -> None:
         """Ajusta la posición neta según lo que decida el agente.
@@ -433,12 +529,10 @@ class BotEngine:
             )
             return
 
-        broker_neto = hasattr(self.broker, "set_position")
-        if not broker_neto:
+        if not hasattr(self.broker, "set_position"):
             self.store.log(
                 "error",
-                "FSRPPO necesita un bróker de posición neta (paper trading). "
-                "La ejecución de posición neta contra FXCM no está implementada.",
+                "FSRPPO necesita un bróker de posición neta y este no la expone.",
             )
             return
 
@@ -483,7 +577,8 @@ class BotEngine:
             return "fuera de sesión permitida"
 
         prices = self.broker.current_prices()
-        if not spread_ok(prices["bid"], prices["ask"], rp.max_spread_pips):
+        if not spread_ok(prices["bid"], prices["ask"], rp.max_spread_pips,
+                         rp.max_spread_bps, self.spec()):
             return f"spread {prices.get('spread_pips')} pips"
 
         day_start = self.store.day_start_equity() or equity
@@ -497,6 +592,41 @@ class BotEngine:
         return None
 
     # -- estado para la web -------------------------------------------------
+
+    def _active_model_status(self) -> dict:
+        """Modelo activo del instrumento actual, con lo mínimo para rotularlo.
+
+        La interfaz necesita saber no solo cuál decide, sino con qué se entrenó:
+        timeframe, tramos y coste asumido. Sin eso, un modelo entrenado en H1 con
+        1,2 pips de spread se ve idéntico a uno de D1 con 35.
+        """
+        from .rl.registry import ModelRegistry
+
+        vacio = {"active_model": None, "active_model_instrument": None,
+                 "active_model_timeframe": None, "active_model_info": None}
+        try:
+            registry = ModelRegistry()
+            run_id = registry.active_id(self.symbol())
+            record = registry.get(run_id) if run_id else None
+        except Exception:
+            return vacio
+        if record is None:
+            return vacio
+        return {
+            "active_model": record.run_id,
+            "active_model_instrument": record.instrument,
+            "active_model_timeframe": record.timeframe,
+            "active_model_info": {
+                "created_at": record.created_at,
+                "train_range": record.train_range,
+                "test_range": record.test_range,
+                "learning_rate": record.ppo_params.get("learning_rate"),
+                "spread_pips": record.env_params.get("spread_pips")
+                or record.env_params.get("instrument", {}).get("typical_spread_pips"),
+                "max_units": record.env_params.get("max_units"),
+                "test_metrics": record.test_metrics,
+            },
+        }
 
     def status(self) -> dict:
         connected = getattr(self.broker, "connected", False)
@@ -520,6 +650,14 @@ class BotEngine:
             "halted_today": self._halted_today(),
             "connected": connected,
             "mode": getattr(self.broker, "mode", "fxcm"),
+            # La interfaz avisa distinto según si las órdenes son reales o no, así
+            # que el modo y el instrumento viajan en cada status.
+            "live_execution": not getattr(self.broker, "read_only", False)
+            and getattr(self.broker, "mode", "").startswith("fxcm"),
+            "instrument": self.symbol(),
+            "asset_class": self.spec().asset_class,
+            "digits": self.spec().digits,
+            "lot_size": getattr(self.broker, "lot_size", self.spec().lot_size),
             "active_strategy": self.strategy_params().active_strategy,
             "account": info,
             "daily_pl_pct": daily_pl_pct,
@@ -535,6 +673,6 @@ class BotEngine:
                 else self.store.get_state("last_processed_boundary")
             ),
             "net_position": int(getattr(self.broker, "position", 0)),
-            "active_model": self._policy_run_id,
+            **self._active_model_status(),
             "last_decision": self.store.get_state("last_decision"),
         }

@@ -5,7 +5,10 @@ import { postJSON } from "@/lib/api";
 import { useLive } from "@/lib/live";
 
 export default function PositionsPanel({ onAction }: { onAction?: (msg: string, ok: boolean) => void }) {
-  const { positions, prices } = useLive();
+  const { positions, prices, status } = useLive();
+  const digits = status?.digits ?? 5;
+  const lotSize = status?.lot_size ?? 100000;
+  const symbol = status?.instrument ?? "—";
 
   async function closeOne(tradeId: string) {
     if (!confirm("¿Cerrar esta posición a mercado?")) return;
@@ -35,16 +38,20 @@ export default function PositionsPanel({ onAction }: { onAction?: (msg: string, 
               <span className={`badge ${p.side === "long" ? "badge-buy" : "badge-sell"}`}>
                 {p.side === "long" ? "BUY" : "SELL"}
               </span>
-              <span className="pos-pair">EUR/USD</span>
+              <span className="pos-pair">{symbol}</span>
               <span className={`pos-pl ${pl >= 0 ? "pos" : "neg"}`}>{sign(pl)}</span>
               <button className="pos-close" title="Cerrar posición" onClick={() => closeOne(p.trade_id)}>
                 ✕
               </button>
             </div>
             <div className="pos-mid">
-              <span>Vol: <b>{fmt(p.units / 100000, 2)}</b></span>
-              <span>Open: <b>{fmtPx(p.open_rate)}</b></span>
-              <span>Cur: <b>{fmtPx(prices?.bid)}</b></span>
+              {/* 1 lote son 100.000 unidades solo en divisas; en acciones y
+                  metales el lote lo define el bróker, así que se ven unidades. */}
+              {lotSize >= 100000
+                ? <span>Vol: <b>{fmt(p.units / lotSize, 2)}</b></span>
+                : <span>Uds: <b>{fmt(p.units, 0)}</b></span>}
+              <span>Open: <b>{fmtPx(p.open_rate, digits)}</b></span>
+              <span>Cur: <b>{fmtPx(prices?.bid, digits)}</b></span>
             </div>
             <div className="pos-bar">
               <div

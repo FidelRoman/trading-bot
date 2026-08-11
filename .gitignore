@@ -12,3 +12,4 @@ data/history/
 # Local history
 .history/
 History/
+data/backtest_*.csv

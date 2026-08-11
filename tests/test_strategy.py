@@ -98,9 +98,54 @@ def test_size_position():
     assert size_position(10_000, 0.005, 0.0, 1000) == 0      # SL inválido
 
 
+def test_size_position_con_multiplicador_de_contrato():
+    # Un contrato que mueve 100 unidades de cuenta por unidad de precio necesita
+    # 100 veces menos unidades para arriesgar lo mismo.
+    assert size_position(10_000, 0.005, 0.0010, 1, contract_multiplier=100.0) == 500
+    assert size_position(10_000, 0.005, 0.0010, 1, contract_multiplier=0.0) == 0
+
+
 def test_spread_ok():
     assert spread_ok(1.10000, 1.10012, 1.5)      # 1.2 pips
     assert not spread_ok(1.10000, 1.10020, 1.5)  # 2.0 pips
+
+
+def test_spread_relativo_admite_activos_no_forex():
+    """El umbral en pips absolutos vetaba el 100% de oro, índices y acciones."""
+    from tradingbot.config import INSTRUMENT_SEEDS, InstrumentSpec
+    from tradingbot.strategy import spread_bps
+
+    oro = INSTRUMENT_SEEDS["XAU/USD"]
+    # 35 pips de oro a 2.400 son ~1,5 bps: caro en pips, normal en relativo.
+    assert spread_bps(2400.00, 2400.35) < 2.0
+    assert spread_ok(2400.00, 2400.35, max_spread_pips=1.5,
+                     max_spread_bps=2.0, spec=oro)
+
+    accion = InstrumentSpec("AAPL", pip=0.01, min_lot=1, typical_spread_pips=2.0,
+                            asset_class="share", digits=2)
+    assert spread_ok(200.00, 200.02, max_spread_pips=1.5,
+                     max_spread_bps=2.0, spec=accion)
+    # Un spread desbocado sigue vetado aunque sea otra clase de activo.
+    assert not spread_ok(200.00, 201.00, max_spread_pips=1.5,
+                         max_spread_bps=2.0, spec=accion)
+
+
+def test_spread_en_divisas_mantiene_la_puerta_en_pips():
+    """En divisas el umbral ya estaba afinado: no debe cambiar de comportamiento."""
+    from tradingbot.config import INSTRUMENT_SEEDS
+
+    eurusd = INSTRUMENT_SEEDS["EUR/USD"]
+    assert spread_ok(1.10000, 1.10012, 1.5, 100.0, eurusd)       # 1,2 pips
+    assert not spread_ok(1.10000, 1.10020, 1.5, 100.0, eurusd)   # 2,0 pips
+    # Y la puerta relativa también aplica en divisas.
+    assert not spread_ok(1.10000, 1.10012, 1.5, 0.5, eurusd)
+
+
+def test_spread_bps_con_precio_invalido_no_revienta():
+    from tradingbot.strategy import spread_bps
+
+    assert spread_bps(0.0, 0.0) == float("inf")
+    assert not spread_ok(0.0, 0.0, 1.5, 2.0)
 
 
 def test_indicators_no_lookahead():

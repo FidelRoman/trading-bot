@@ -194,7 +194,90 @@ class TrainingJob:
         self._release(resultado)
         return resultado
 
+    # -- descarga de histórico ---------------------------------------------
+
+    def run_download(self, broker, symbol: str, timeframe: str, years: int) -> dict:
+        """Descarga histórico de FXCM al CSV que luego consume el entrenamiento.
+
+        Va por la sesión que el bróker ya tiene autenticada, pidiéndole otro
+        símbolo: abrir un segundo login contra FXCM mientras el bot opera podría
+        tumbarle la sesión de trading.
+
+        Se pide en trozos porque FXCM acota cuántas velas devuelve por llamada;
+        el nombre del archivo sigue el formato de ``scripts/download_history.py``
+        para que ambos caminos produzcan lo mismo.
+        """
+        from datetime import timedelta
+
+        empezado = datetime.now(timezone.utc)
+        try:
+            if not getattr(broker, "connected", False):
+                raise RuntimeError("El bróker no está conectado a FXCM")
+            if not hasattr(broker, "get_candles"):
+                raise RuntimeError("El bróker no expone histórico")
+
+            hasta = datetime.now(timezone.utc)
+            try:
+                desde = hasta.replace(year=hasta.year - years)
+            except ValueError:                      # 29 de febrero
+                desde = hasta.replace(year=hasta.year - years, day=28)
+
+            trozos: list[pd.DataFrame] = []
+            total_dias = max((hasta - desde).days, 1)
+            cursor = desde
+            while cursor < hasta:
+                fin = min(cursor + timedelta(days=90), hasta)
+                self._set(
+                    f"{symbol} {timeframe.upper()}: {cursor:%Y-%m-%d} → {fin:%Y-%m-%d}",
+                    (cursor - desde).days / total_dias,
+                )
+                trozo = broker.get_candles(
+                    count=0, date_from=cursor, date_to=fin,
+                    timeframe=timeframe, symbol=symbol,
+                )
+                if trozo is not None and not trozo.empty:
+                    trozos.append(trozo)
+                cursor = fin
+
+            if not trozos:
+                raise RuntimeError(
+                    f"FXCM no devolvió velas de {symbol} {timeframe}. "
+                    "¿Está el instrumento suscrito en estado T?"
+                )
+            marco = pd.concat(trozos)
+            marco = marco[~marco.index.duplicated(keep="first")].sort_index()
+
+            HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+            nombre = "{}_{}_{:%Y%m%d}_{:%Y%m%d}.csv".format(
+                symbol.replace("/", "").lower(), timeframe.lower(), desde, hasta
+            )
+            marco.to_csv(HISTORY_DIR / nombre)
+
+            resultado = {
+                "status": "done",
+                "kind": "download",
+                "dataset": nombre,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "bars": int(len(marco)),
+                "first_bar": str(marco.index[0]),
+                "last_bar": str(marco.index[-1]),
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "elapsed_s": round((datetime.now(timezone.utc) - empezado).total_seconds(), 1),
+            }
+        except Exception as exc:
+            log.exception("descarga de histórico")
+            resultado = {"status": "error", "kind": "download", "error": str(exc)}
+        self._release(resultado)
+        return resultado
+
     # -- lanzadores --------------------------------------------------------
+
+    def start_download(self, **kwargs) -> bool:
+        if not self._claim("download"):
+            return False
+        threading.Thread(target=self.run_download, kwargs=kwargs, daemon=True).start()
+        return True
 
     def start_precompute(self, **kwargs) -> bool:
         if not self._claim("precompute"):

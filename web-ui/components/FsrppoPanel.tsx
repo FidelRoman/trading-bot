@@ -18,6 +18,10 @@ export default function FsrppoPanel() {
 
   const decision = status?.last_decision ?? null;
   const modelo = status?.active_model;
+  // El modelo activo es por instrumento: al cambiar de símbolo cambia el que
+  // decide, así que el panel se rotula siempre con el símbolo que opera el bot.
+  const simbolo = status?.instrument ?? "—";
+  const info = status?.active_model_info ?? null;
   const neta = status?.net_position ?? 0;
   const lado = decision ? LADO[decision.side] ?? LADO.hold : null;
   const conservadas = decision?.kept.filter(Boolean).length ?? 0;
@@ -27,15 +31,18 @@ export default function FsrppoPanel() {
       <div className="card-head">
         <div className="card-title">◈ AGENTE FSRPPO</div>
         <span className={`chip${modelo ? " ok" : " warn"}`}>
-          {modelo ?? "SIN MODELO ACTIVO"}
+          {modelo ? `${simbolo} · ${modelo}` : `SIN MODELO PARA ${simbolo}`}
         </span>
       </div>
 
       {!modelo ? (
         <div className="empty">
-          FSRPPO está seleccionado pero no hay ningún modelo activo: el bot no
-          operará. <Link href="/models" className="linkish">Elige uno</Link> o{" "}
+          No hay ningún modelo activo para <strong>{simbolo}</strong>: el bot no
+          operará este instrumento.{" "}
+          <Link href="/models" className="linkish">Elige uno</Link> o{" "}
           <Link href="/train" className="linkish">entrena uno nuevo</Link>.
+          Cada instrumento tiene su propio modelo activo, porque el tamaño de las
+          órdenes se calcula con la ficha del activo con el que se entrenó.
         </div>
       ) : (
         <div className="metric-row">
@@ -63,6 +70,19 @@ export default function FsrppoPanel() {
               {decision ? `${conservadas}/${decision.kept.length}` : "—"}
             </div>
           </div>
+        </div>
+      )}
+
+      {modelo && info && (
+        <div className="hint" style={{ padding: "8px 12px" }}>
+          Entrenado en <strong>{status?.active_model_instrument}</strong>{" "}
+          {status?.active_model_timeframe?.toUpperCase()} ·
+          train {info.train_range?.[0]?.slice(0, 10)} → {info.train_range?.[1]?.slice(0, 10)} ·
+          test {info.test_range?.[0]?.slice(0, 10)} → {info.test_range?.[1]?.slice(0, 10)}
+          {info.learning_rate != null && <> · lr {info.learning_rate}</>}
+          {info.spread_pips != null && <> · spread asumido {info.spread_pips} pips</>}
+          {info.max_units != null && <> · exposición máx. {fmt(info.max_units, 0)}</>}
+          {" "}<Link href="/models" className="linkish">Ver parámetros</Link>
         </div>
       )}
 
