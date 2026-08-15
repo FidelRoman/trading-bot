@@ -6,13 +6,14 @@ Un solo backtest a la vez; el resultado completo se persiste en el Store
 from __future__ import annotations
 
 import logging
+import hashlib
 import math
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 from ..backtest import download_history, load_csv, run_backtest, synthetic_df
-from ..config import PROJECT_ROOT, RiskParams, StrategyParams
+from ..config import DEFAULT_SPEC, PROJECT_ROOT, RiskParams, StrategyParams
 from ..strategy import SIGNAL_STRATEGIES
 
 log = logging.getLogger(__name__)
@@ -41,6 +42,13 @@ class BacktestJob:
         self._lock = threading.Lock()
         self._running = False
         self._note = ""
+        previous = self.store.get_state("last_backtest")
+        if isinstance(previous, dict) and previous.get("status") == "running":
+            self.store.set_state("last_backtest", {
+                **previous,
+                "status": "interrupted",
+                "error": "El proceso se reinició antes de terminar el backtest",
+            })
 
     # -- estado ----------------------------------------------------------
 
@@ -63,6 +71,11 @@ class BacktestJob:
                 return False
             self._running = True
             self._note = "Preparando datos…"
+            self.store.set_state("last_backtest", {
+                "status": "running",
+                "started": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "note": self._note,
+            })
             return True
 
     def run_sync(
@@ -108,9 +121,15 @@ class BacktestJob:
             if fixed_units is None:
                 fixed_units = int(self.engine._overrides().get("fixed_units", 0))
 
-            self._set_note(f"Simulando {len(df)} velas…")
+            # La ficha del instrumento que se está probando: el pip fija el coste
+            # del spread y el lote mínimo el tamaño de cada posición. Sin pasarla,
+            # run_backtest caía en la de EUR/USD y cualquier otro activo salía mal
+            # dimensionado (o directamente sin operaciones).
+            spec = getattr(self.broker, "spec", None) or DEFAULT_SPEC
+            self._set_note(f"Simulando {len(df)} velas de {spec.symbol}…")
             result = run_backtest(
-                df, strategy_params=sp, risk=rp, initial_equity=equity, spread_pips=spread_pips, fixed_units=fixed_units
+                df, strategy_params=sp, risk=rp, initial_equity=equity,
+                spread_pips=spread_pips, fixed_units=fixed_units, spec=spec,
             )
             eq = result.equity_curve
             seen: set[int] = set()
@@ -185,13 +204,29 @@ class BacktestJob:
                 self._running = False
 
     def _load_data(self, source: str, timeframe: str, date_from: datetime, date_to: datetime):
-        label_range = f"{date_from:%Y-%m-%d} → {date_to:%Y-%m-%d} ({timeframe.upper()})"
+        # El instrumento va en la etiqueta: el histórico FXCM sale del que opera el
+        # bot ahora mismo, no de nada que se elija en el formulario. Sin decirlo,
+        # un backtest de oro se lee como si fuera del par que uno tenía en la cabeza.
+        simbolo = str(getattr(self.broker, "instrument", "") or "")
+        label_range = (f"{simbolo} " if simbolo else "") + \
+            f"{date_from:%Y-%m-%d} → {date_to:%Y-%m-%d} ({timeframe.upper()})"
         if source == "synthetic":
             df = synthetic_df(timeframe=timeframe, date_from=date_from, date_to=date_to)
             return df, f"Sintético {label_range}"
         if source == "csv":
             if not UPLOAD_CSV.exists():
                 raise RuntimeError("No hay CSV subido: usa 'Subir CSV' primero")
+            manifest = self.store.get_state("backtest_upload_manifest", {}) or {}
+            if manifest.get("instrument") != simbolo:
+                raise RuntimeError(
+                    "El CSV se subió para {} y el instrumento activo es {}; vuelve a subirlo "
+                    "con el instrumento correcto seleccionado".format(
+                        manifest.get("instrument") or "un instrumento desconocido", simbolo
+                    )
+                )
+            digest = hashlib.sha256(UPLOAD_CSV.read_bytes()).hexdigest()
+            if digest != manifest.get("sha256"):
+                raise RuntimeError("El CSV cambió desde que se registró; vuelve a subirlo")
             df = load_csv(UPLOAD_CSV, timeframe=timeframe)
             df = df.loc[(df.index >= date_from) & (df.index <= date_to)]
             if len(df) < 30:

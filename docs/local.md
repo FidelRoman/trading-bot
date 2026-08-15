@@ -65,7 +65,9 @@ MOCK=1 uv run uvicorn tradingbot.web.app:app --port 8000
 Con `FXCM_CONNECTION=Real`, el bot **arranca siempre
 pausado** y lo registra en el log: un reinicio del proceso no reabre operativa real
 sin que alguien pulse INICIAR. El panel muestra una banda roja «ÓRDENES REALES»
-cuando es el caso.
+cuando es el caso. INICIAR y cada orden manual requieren reconocimiento Real en
+el backend. Este reconocimiento es consentimiento, no una evaluación: la app
+permite operar aunque el modelo o la estrategia no estén validados.
 
 - `caffeinate -s` impide que la Mac se duerma; el bot solo opera mientras el
   proceso esté vivo.

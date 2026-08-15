@@ -17,8 +17,8 @@ interface CredentialsState {
   is_real: boolean;
   account_id?: string | null;
   balance?: number | null;
-  has_demo_credentials?: boolean;
-  has_real_credentials?: boolean;
+  has_demo?: boolean;
+  has_real?: boolean;
 }
 
 interface SaveResult {
@@ -30,7 +30,7 @@ interface SaveResult {
 }
 
 export default function AccountCard() {
-  const { status, refreshStatus } = useLive();
+  const { status, positions, refreshStatus } = useLive();
   const [saved, setSaved] = useState<CredentialsState | null>(null);
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
@@ -43,11 +43,11 @@ export default function AccountCard() {
     const next = await getJSON<CredentialsState>("/api/credentials");
     setSaved(next);
     setUser(next.user);
-    setConnection(next.is_real ? "Real" : next.connected ? "Demo" : "auto");
+    setConnection(next.connection === "Real" || next.connection === "Demo" ? next.connection : "auto");
   }
 
   useEffect(() => {
-    load().catch(() => {});
+    load().catch(() => setMessage({ text: "No se pudo cargar el estado de la cuenta.", ok: false }));
   }, [status?.connected, status?.mode]);
 
   async function save() {
@@ -59,7 +59,12 @@ export default function AccountCard() {
     setMessage(null);
     try {
       // Contraseña vacía = conservar la que ya está en .env.
-      const result = await postJSON<SaveResult>("/api/credentials", { user, password, connection });
+      const result = await postJSON<SaveResult>("/api/credentials", {
+        user,
+        password,
+        connection,
+        acknowledge_real: connection === "Real" && acknowledgeReal,
+      });
       if (!result.ok) {
         setMessage({ text: result.error || "No se pudo conectar.", ok: false });
         return;
@@ -82,19 +87,23 @@ export default function AccountCard() {
 
   const liveAccount = status?.account;
   const real = connection === "Real";
-  const running = !!status?.running;
+  // `running` puede ser false por límite diario aunque el motor siga armado.
+  // `paused` es la fuente de verdad para permitir cambios de cuenta.
+  const running = Boolean(status && !status.paused);
+  const hasOpenPositions = positions.length > 0;
+  const blocked = !status || running || hasOpenPositions;
 
   return (
     <section className="card narrow mb" aria-labelledby="account-title">
       <div className="card-head">
-        <div className="card-title" id="account-title">CREDENCIALES</div>
+        <h2 className="card-title" id="account-title">CUENTA Y CREDENCIALES</h2>
         <span className={`chip ${saved?.is_real ? "real" : "ok"}`}>
           {saved?.is_real ? "CUENTA REAL" : saved?.connected ? "CUENTA DEMO" : "SIMULADO"}
         </span>
       </div>
 
       <p className="hint" style={{ marginBottom: 14 }}>
-        Guardadas: <b>Demo</b> {saved?.has_demo_credentials ? "✓" : "✗"} · <b>Real</b> {saved?.has_real_credentials ? "✓" : "✗"}
+        Credenciales disponibles: <b>Demo</b> {saved?.has_demo ? "sí" : "no"} · <b>Real</b> {saved?.has_real ? "sí" : "no"}
       </p>
 
       {liveAccount?.account_id && (
@@ -110,7 +119,7 @@ export default function AccountCard() {
             type="text"
             value={user}
             autoComplete="username"
-            disabled={busy || running}
+            disabled={busy || blocked}
             onChange={(event) => setUser(event.target.value)}
           />
         </label>
@@ -121,7 +130,7 @@ export default function AccountCard() {
             value={password}
             autoComplete="current-password"
             placeholder={saved?.has_password ? "(guardada — dejar vacío para conservarla)" : ""}
-            disabled={busy || running}
+            disabled={busy || blocked}
             onChange={(event) => setPassword(event.target.value)}
           />
         </label>
@@ -129,7 +138,7 @@ export default function AccountCard() {
           CUENTA
           <select
             value={connection}
-            disabled={busy || running}
+            disabled={busy || blocked}
             onChange={(event) => {
               const value = event.target.value as Connection;
               setConnection(value);
@@ -148,7 +157,7 @@ export default function AccountCard() {
           <input
             type="checkbox"
             checked={acknowledgeReal}
-            disabled={busy || running}
+            disabled={busy || blocked}
             onChange={(event) => setAcknowledgeReal(event.target.checked)}
           />
           <span>Entiendo que las órdenes se enviarán a la cuenta Real seleccionada.</span>
@@ -156,11 +165,21 @@ export default function AccountCard() {
       )}
 
       <div className="form-actions">
-        <button className="btn btn-start" disabled={busy || running} onClick={save}>
+        <button className="btn btn-start" disabled={busy || blocked} onClick={save}>
           {busy ? "CONECTANDO…" : "CONECTAR CUENTA"}
         </button>
-        {message && <span className={`hint ${message.ok ? "ok" : "err"}`}>{message.text}</span>}
+        {message && <span className={`hint ${message.ok ? "ok" : "err"}`} role={message.ok ? "status" : "alert"}>{message.text}</span>}
       </div>
+
+      {blocked && (
+        <div className="picker-blocked" role="status">
+          {!status
+            ? "Esperando el estado del bot antes de habilitar cambios de cuenta."
+            : running
+            ? "Detén el bot antes de cambiar de cuenta o credenciales."
+            : `Cierra ${positions.length === 1 ? "la posición abierta" : `las ${positions.length} posiciones abiertas`} antes de cambiar de cuenta.`}
+        </div>
+      )}
 
       <p className="hint" style={{ marginTop: 12 }}>
         Las credenciales se guardan en el <code>.env</code> de esta máquina y nunca salen de ella.

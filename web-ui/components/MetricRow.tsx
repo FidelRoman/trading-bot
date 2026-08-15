@@ -14,17 +14,17 @@ export default function MetricRow() {
   return (
     <div className="metric-row">
       <div className="metric-card">
-        <div className="m-lbl">TOTAL EQUITY</div>
+        <div className="m-lbl">CAPITAL TOTAL</div>
         <div className="m-val">{money(eq)}</div>
         <div className={`m-sub ${dayPct >= 0 ? "pos" : "neg"}`}>{sign(dayPct, "% hoy")}</div>
       </div>
       <div className="metric-card">
-        <div className="m-lbl">FREE MARGIN</div>
+        <div className="m-lbl">MARGEN LIBRE</div>
         <div className="m-val">{money(usable)}</div>
         <div className="m-sub">{eq && usable != null ? fmt((usable / eq) * 100, 1) + "% del equity" : "—"}</div>
       </div>
       <div className="metric-card">
-        <div className="m-lbl">DAILY PNL</div>
+        <div className="m-lbl">P&amp;L DEL DÍA</div>
         <div className={`m-val ${dayAbs >= 0 ? "pos" : "neg"}`}>
           {dayAbs >= 0 ? "+" : "-"}${fmt(Math.abs(dayAbs))}
         </div>
@@ -33,9 +33,9 @@ export default function MetricRow() {
         </div>
       </div>
       <div className="metric-card">
-        <div className="m-lbl">MAX DRAWDOWN</div>
+        <div className="m-lbl">CAÍDA MÁXIMA</div>
         <div className={`m-val ${dd <= -5 ? "neg" : dd < 0 ? "" : "pos"}`}>{fmt(dd, 1)}%</div>
-        <div className="m-sub">Target: &lt; 5%</div>
+        <div className="m-sub">Objetivo: &lt; 5%</div>
       </div>
     </div>
   );

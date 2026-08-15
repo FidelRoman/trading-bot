@@ -10,7 +10,7 @@ VENV="${1:-.venv}"
 SO="$VENV/lib/python3.10/site-packages/forexconnect/lib/fxcorepy.so"
 OLD_REF="/Library/Frameworks/Python.framework/Versions/3.10/Python"
 
-PYBIN="$(readlink -f "$VENV/bin/python")"
+PYBIN="$("$VENV/bin/python" -c 'from pathlib import Path; import sys; print(Path(sys.executable).resolve())')"
 LIBPYTHON="$(dirname "$(dirname "$PYBIN")")/lib/libpython3.10.dylib"
 
 [[ -f "$SO" ]] || { echo "No existe $SO"; exit 1; }

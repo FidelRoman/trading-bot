@@ -60,7 +60,7 @@ def _credentials_from_env():
         "user": user,
         "password": password,
         "connection": os.getenv("FXCM_CONNECTION", "Demo"),
-        "url": os.getenv("FXCM_URL", "http://www.fxcorporate.com/Hosts.jsp"),
+        "url": os.getenv("FXCM_URL", "https://www.fxcorporate.com/Hosts.jsp"),
     }
 
 

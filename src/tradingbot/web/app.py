@@ -75,6 +75,24 @@ def execution_mode() -> str:
     return "live"
 
 
+def _is_real_broker(broker) -> bool:
+    return str(getattr(broker, "mode", "")).lower() == "fxcm-real"
+
+
+def _real_acknowledged(payload: dict | None) -> bool:
+    """Consentimiento explícito para una acción que mueve dinero real.
+
+    No juzga ni restringe la estrategia o el modelo: únicamente impide que un
+    cliente omita por accidente el destino Real que el operador decidió usar.
+    """
+    return isinstance(payload, dict) and payload.get("acknowledge_real") is True
+
+
+async def _all_open_trades(broker) -> list[dict]:
+    reader = getattr(broker, "all_open_trades", None) or broker.open_trades
+    return await asyncio.to_thread(reader)
+
+
 def _selected_symbol(store=None) -> str:
     """Instrumento elegido en la interfaz, o EUR/USD si no hay ninguno guardado."""
     from ..config import INSTRUMENT, normalize_symbol
@@ -167,8 +185,9 @@ async def lifespan(app: FastAPI):
         asyncio.run_coroutine_threadsafe(hub.broadcast(payload), bucle)
 
     app.state.training = TrainingJob(store, notify=notificar)
+    app.state.reconfigure_lock = asyncio.Lock()
 
-    engine_task = asyncio.create_task(engine.run())
+    app.state.engine_task = asyncio.create_task(engine.run())
 
     async def price_pump() -> None:
         while True:
@@ -198,12 +217,12 @@ async def lifespan(app: FastAPI):
     finally:
         engine.stop()
         pump_task.cancel()
-        engine_task.cancel()
-        await asyncio.gather(pump_task, engine_task, return_exceptions=True)
+        app.state.engine_task.cancel()
+        await asyncio.gather(pump_task, app.state.engine_task, return_exceptions=True)
         await asyncio.to_thread(app.state.broker.disconnect)
 
 
-app = FastAPI(title="FSRPPO·BOT — EUR/USD H1", lifespan=lifespan)
+app = FastAPI(title="FSRPPO·BOT — FXCM multi-instrumento", lifespan=lifespan)
 
 # En producción la UI se sirve desde este mismo origen y CORS sobra. Hace falta
 # para `next dev`, que sirve el frontend en otro puerto.
@@ -228,7 +247,7 @@ async def status():
     return app.state.engine.status()
 
 
-VALID_TF = {"m5", "m15", "m30", "h1", "h4"}
+VALID_TF = {"m5", "m15", "m30", "h1", "h4", "d1"}
 
 
 @app.get("/api/candles")
@@ -279,11 +298,22 @@ async def logs(limit: int = 80):
 
 
 @app.post("/api/control/{action}")
-async def control(action: str):
+async def control(action: str, payload: dict = Body(default={})):
     engine: BotEngine = app.state.engine
     if action == "pause":
         engine.pause()
     elif action == "resume":
+        if _is_real_broker(app.state.broker) and not _real_acknowledged(payload):
+            return {
+                "ok": False,
+                "error": "Confirma explícitamente que deseas iniciar el bot en cuenta Real",
+                "requires_real_ack": True,
+            }
+        if _is_real_broker(app.state.broker):
+            engine.store.log(
+                "warn",
+                "OPERADOR CONFIRMÓ INICIO EN REAL; el rendimiento del modelo o estrategia no se usa como bloqueo",
+            )
         engine.resume()
     else:
         return {"ok": False, "error": "acción inválida"}
@@ -311,12 +341,24 @@ async def positions():
 
 @app.post("/api/manual/{side}")
 async def manual(side: str, payload: dict = Body(...)):
+    if _is_real_broker(app.state.broker) and not _real_acknowledged(payload):
+        return {
+            "ok": False,
+            "error": "Confirma explícitamente que la orden manual se enviará a cuenta Real",
+            "requires_real_ack": True,
+        }
+    try:
+        lots = float(payload.get("lots", 0.01))
+        sl_pips = float(payload.get("sl_pips", 0))
+        tp_pips = float(payload.get("tp_pips", 0))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "Lotes, SL y TP deben ser números válidos"}
     result = await asyncio.to_thread(
         app.state.engine.manual_order,
         side,
-        float(payload.get("lots", 0.01)),
-        float(payload.get("sl_pips", 0)),
-        float(payload.get("tp_pips", 0)),
+        lots,
+        sl_pips,
+        tp_pips,
     )
     await app.state.hub.broadcast({"type": "status", "status": app.state.engine.status()})
     return result
@@ -378,10 +420,28 @@ async def get_credentials():
 
 @app.post("/api/credentials")
 async def set_credentials(payload: dict = Body(...)):
+    async with app.state.reconfigure_lock:
+        return await _set_credentials_locked(payload)
+
+
+async def _set_credentials_locked(payload: dict):
     import os
 
     from ..broker import FxcmBroker
-    from ..config import FxcmCredentials, update_env_file
+    from ..config import FxcmCredentials, Settings, db_path_for_connection, update_env_file
+
+    if app.state.engine.running:
+        return {"ok": False, "error": "Detén el bot antes de cambiar de cuenta o credenciales"}
+    try:
+        abiertas = await _all_open_trades(app.state.broker)
+    except Exception as exc:
+        return {"ok": False, "error": f"No se pudo verificar que la cuenta esté plana: {exc}"}
+    if abiertas:
+        return {
+            "ok": False,
+            "error": "Cierra todas las posiciones de la cuenta antes de cambiar credenciales",
+            "open_positions": len(abiertas),
+        }
 
     user = str(payload.get("user", "")).strip()
     password = str(payload.get("password", "")).strip()
@@ -404,13 +464,16 @@ async def set_credentials(payload: dict = Body(...)):
         if not user or not password:
             return {"ok": False, "error": "Usuario y contraseña son obligatorios"}
 
-    url = os.getenv("FXCM_URL", "http://www.fxcorporate.com/Hosts.jsp")
+    url = os.getenv("FXCM_URL", "https://www.fxcorporate.com/Hosts.jsp")
     attempts = ["Demo", "Real"] if connection == "auto" else [connection]
     new_broker = None
     used_connection = None
     errors: list[str] = []
     for conn in attempts:
-        candidate = FxcmBroker(FxcmCredentials(user=user, password=password, connection=conn, url=url))
+        candidate = FxcmBroker(
+            FxcmCredentials(user=user, password=password, connection=conn, url=url),
+            instrument=_selected_symbol(app.state.store),
+        )
         try:
             await asyncio.to_thread(candidate.connect)
             new_broker = candidate
@@ -421,6 +484,34 @@ async def set_credentials(payload: dict = Body(...)):
     if new_broker is None:
         return {"ok": False, "error": "Login fallido — " + " | ".join(errors)}
 
+    if used_connection == "Real" and not _real_acknowledged(payload):
+        try:
+            await asyncio.to_thread(new_broker.disconnect)
+        finally:
+            return {
+                "ok": False,
+                "error": "La conexión resolvió a Real; selecciónala y confirma explícitamente el uso de dinero real",
+                "requires_real_ack": True,
+            }
+
+    credentials = FxcmCredentials(
+        user=user, password=password, connection=str(used_connection), url=url
+    )
+    new_settings = Settings(
+        fxcm=credentials,
+        db_path=db_path_for_connection(str(used_connection), mock=False),
+    )
+    old_store = app.state.store
+    try:
+        new_store = (
+            old_store
+            if str(old_store.path) == str(new_settings.db_path)
+            else Store(new_settings.db_path)
+        )
+    except Exception as exc:
+        await asyncio.to_thread(new_broker.disconnect)
+        return {"ok": False, "error": f"No se pudo abrir la base de datos de la cuenta: {exc}"}
+
     # Persistir y hacer swap en caliente
     env_updates = {"FXCM_USER": user, "FXCM_PASS": password, "FXCM_CONNECTION": used_connection}
     if used_connection == "Demo":
@@ -429,39 +520,38 @@ async def set_credentials(payload: dict = Body(...)):
     elif used_connection == "Real":
         env_updates["FXCM_USER_REAL"] = user
         env_updates["FXCM_PASS_REAL"] = password
-    update_env_file(env_updates)
+    # Detener el loop durante el cambio evita que use un Store cerrado o mezcle
+    # el bróker anterior con el nuevo. La ejecución se reinicia ya pausada.
+    app.state.engine_task.cancel()
+    await asyncio.gather(app.state.engine_task, return_exceptions=True)
+
+    try:
+        update_env_file(env_updates)
+    except Exception as exc:
+        app.state.engine_task = asyncio.create_task(app.state.engine.run())
+        if new_store is not old_store:
+            new_store.close()
+        await asyncio.to_thread(new_broker.disconnect)
+        return {"ok": False, "error": f"No se pudieron persistir las credenciales: {exc}"}
     os.environ.update(env_updates)
 
-    # Recargar configuración y re-crear store para el nuevo modo si cambió
-    from ..config import load_settings
-
-    new_settings = load_settings()
-    if str(app.state.store.path) != str(new_settings.db_path):
-        old_store = app.state.store
-        new_store = Store(new_settings.db_path)
-        
+    # Re-crear referencias al Store del nuevo modo si cambió.
+    if new_store is not old_store:
         # Swap store references
         app.state.store = new_store
         app.state.engine.store = new_store
         app.state.backtest.store = new_store
         
         # Close old db
-        try:
-            old_store.close()
-        except Exception:
-            pass
+        old_store.close()
 
-    # El candidato solo sirvió para validar el login. El bróker definitivo se
-    # construye con _make_broker en vez de asignar el candidato pasa a ser el instrumento y la spec seleccionados.
+    # El candidato ya se conectó con el instrumento seleccionado: reutilizarlo
+    # elimina un segundo login que podía fallar después de persistir credenciales.
     old = app.state.broker
-    try:
-        await asyncio.to_thread(new_broker.disconnect)
-    except Exception:
-        pass
-    definitivo = _make_broker(new_settings, app.state.store)
-    await asyncio.to_thread(definitivo.connect)
+    definitivo = new_broker
     app.state.broker = definitivo
     app.state.engine.broker = definitivo
+    app.state.engine.s = new_settings
     app.state.backtest.broker = definitivo
     app.state.engine.reset_policy()
     try:
@@ -471,15 +561,18 @@ async def set_credentials(payload: dict = Body(...)):
     new_broker = definitivo
 
     is_real = used_connection == "Real"
+    # Todo cambio de cuenta termina pausado, pero no congelado: el operador puede
+    # iniciarlo inmediatamente. En Real no se valida ni restringe el modelo.
+    app.state.engine.pause()
     if is_real:
-        # Cuenta con dinero real: el bot nunca arranca solo
-        app.state.engine.pause()
         app.state.store.log(
             "warn",
-            "CUENTA REAL conectada — bot pausado automáticamente; actívalo solo con una estrategia validada",
+            "CUENTA REAL conectada — bot pausado tras el cambio; el operador puede iniciarlo bajo su responsabilidad",
         )
     else:
         app.state.store.log("info", f"Credenciales actualizadas: cuenta {used_connection}")
+
+    app.state.engine_task = asyncio.create_task(app.state.engine.run())
 
     info = await asyncio.to_thread(new_broker.account_info)
     await app.state.hub.broadcast({"type": "status", "status": app.state.engine.status()})
@@ -584,13 +677,34 @@ async def backtest_start(payload: dict = Body(...)):
 
 @app.post("/api/backtest/csv")
 async def backtest_upload(file: UploadFile):
+    import hashlib
+    import tempfile
+
     if not file.filename or not file.filename.lower().endswith(".csv"):
         return {"ok": False, "error": "El archivo debe ser .csv"}
     data = await file.read()
     if len(data) > 50 * 1024 * 1024:
         return {"ok": False, "error": "CSV demasiado grande (máx. 50 MB)"}
     UPLOAD_CSV.parent.mkdir(parents=True, exist_ok=True)
-    UPLOAD_CSV.write_bytes(data)
+    fd, temporary = tempfile.mkstemp(prefix=".upload.", suffix=".csv", dir=UPLOAD_CSV.parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, UPLOAD_CSV)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+    app.state.store.set_state("backtest_upload_manifest", {
+        "original_filename": file.filename,
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "instrument": app.state.engine.symbol(),
+        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+    })
     app.state.store.log("info", f"CSV subido para backtest: {file.filename} ({len(data) // 1024} KB)")
     return {"ok": True, "filename": file.filename, "kb": len(data) // 1024}
 
@@ -726,6 +840,13 @@ async def training_start(payload: dict = Body(...)):
     except ValueError as exc:
         return {"ok": False, "error": f"{exc}. Pulsa ACTUALIZAR en el selector de instrumentos."}
 
+    dataset_name = str(payload.get("dataset") or "")
+    timeframe = str(payload.get("timeframe", "h1")).lower()
+    try:
+        TrainingJob.validate_dataset(dataset_name, instrument.symbol, timeframe)
+    except (ValueError, FileNotFoundError) as exc:
+        return {"ok": False, "error": str(exc)}
+
     spread = payload.get("spread_pips")
     default_max_units = 20_000 if instrument.min_lot >= 1_000 else 5
     max_units = int(payload.get("max_units", default_max_units))
@@ -740,8 +861,8 @@ async def training_start(payload: dict = Body(...)):
     )
 
     started = job.start_training(
-        csv_name=payload.get("dataset"),
-        timeframe=str(payload.get("timeframe", "h1")).lower(),
+        csv_name=dataset_name,
+        timeframe=timeframe,
         train_end=payload.get("train_end"),
         fsr=_fsr_params(payload),
         ppo=ppo,
@@ -805,7 +926,7 @@ async def fsrppo_compare(payload: dict = Body(...)):
 
 @app.get("/api/models")
 async def models_list():
-    from ..rl.registry import ModelRegistry
+    from ..rl.registry import ModelRegistry, meets_acceptance
 
     from ..config import normalize_symbol
 
@@ -821,6 +942,7 @@ async def models_list():
             {
                 **modelo.as_dict(),
                 "is_active": activos.get(normalize_symbol(modelo.instrument)) == modelo.run_id,
+                "meets_acceptance": meets_acceptance(modelo),
             }
             for modelo in registro.list()
         ],
@@ -841,6 +963,7 @@ def _seed_catalog() -> list[dict]:
             "asset_class": spec.asset_class,
             "typical_spread_pips": spec.typical_spread_pips,
             "quote_currency": spec.quote_currency,
+            "contract_multiplier": spec.contract_multiplier,
             "subscription_status": "T",
             "tradable": True,
         }
@@ -883,6 +1006,7 @@ async def instrument_current():
         "min_lot": getattr(spec, "min_lot", 1000),
         "lot_size": getattr(broker, "lot_size", getattr(spec, "lot_size", 100_000)),
         "quote_currency": getattr(spec, "quote_currency", "USD"),
+        "contract_multiplier": getattr(spec, "contract_multiplier", 1.0),
         # El bróker simulado no tiene suscripción: se reporta "T" para que la
         # interfaz no marque como no operable algo que sí puede simular.
         "subscription_status": await asyncio.to_thread(
@@ -1018,18 +1142,30 @@ async def model_history(run_id: str):
 
 @app.post("/api/models/{run_id}/activate")
 async def model_activate(run_id: str):
-    from ..rl.registry import ModelRegistry
+    from ..rl.registry import ModelRegistry, meets_acceptance
 
     try:
-        instrumento = ModelRegistry().activate(run_id)
+        registro = ModelRegistry()
+        instrumento = registro.activate(run_id)
     except FileNotFoundError as exc:
         return {"ok": False, "error": str(exc)}
     # El instrumento lo decide el modelo, no la pantalla desde la que se pulsó:
     # la interfaz lo devuelve al usuario para que no crea que armó otra cosa.
-    app.state.store.log("info", f"Modelo activo para {instrumento}: {run_id}")
+    record = registro.get(run_id)
+    accepted = bool(record and meets_acceptance(record))
+    app.state.store.log(
+        "info" if accepted else "warn",
+        f"Modelo activo para {instrumento}: {run_id}; "
+        f"criterio de aceptación={'cumplido' if accepted else 'no cumplido'}; activación permitida bajo responsabilidad del operador",
+    )
     app.state.engine.reset_policy()
     await app.state.hub.broadcast({"type": "status", "status": app.state.engine.status()})
-    return {"ok": True, "active": run_id, "instrument": instrumento}
+    return {
+        "ok": True,
+        "active": run_id,
+        "instrument": instrumento,
+        "meets_acceptance": accepted,
+    }
 
 
 @app.post("/api/models/deactivate")

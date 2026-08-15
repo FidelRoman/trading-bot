@@ -1,11 +1,8 @@
-"""Descubrimiento del universo de instrumentos operables de la cuenta FXCM.
+"""Descubrimiento local del universo de instrumentos operables de FXCM.
 
-Vercel no tiene credenciales FXCM, así que el catálogo lo construye el worker
-(``scripts/scheduled_tick.py``) recorriendo la tabla OFFERS y lo publica como un
-único documento de estado en Firestore. Va en un documento y no en una colección
-porque el cliente REST de la UI (``web-ui/lib/server/firestore.ts``) pagina de
-1.000 en 1.000 sin soportar queries: una colección por oferta costaría cientos de
-lecturas por carga de página.
+El backend conectado recorre la tabla OFFERS y guarda un catálogo compacto en el
+Store SQLite de la cuenta. La UI lo consulta por ``/api/instruments`` y puede
+refrescarlo explícitamente sin depender de servicios remotos.
 
 Este módulo **no importa forexconnect a propósito**. Opera por duck typing sobre
 filas "row-like" para poder testearse con dobles en cualquier plataforma, ya que
@@ -223,6 +220,10 @@ def offer_to_entry(row: Any, base_unit_size: int = 1) -> Optional[dict]:
         # pip sin tener que volver a conectarse.
         "point_size": _to_float(_attr(row, "point_size", "PointSize")),
         "pip_cost": _to_float(_attr(row, "pip_cost", "PipCost")),
+        "contract_multiplier": max(
+            _to_float(_attr(row, "contract_multiplier", "ContractMultiplier"), 1.0),
+            1e-12,
+        ),
     }
     entry["tradable"] = entry["subscription_status"] == "T"
     if pip > 0 and ask > bid > 0:
@@ -242,8 +243,7 @@ def _quote_currency(row: Any, symbol: str) -> str:
 
 
 #: Campos que cambian en cada tick con el precio. Quedan fuera de la huella para
-#: que el catálogo no se reescriba 288 veces al día (cuota Firestore gratuita:
-#: 20.000 escrituras/día).
+#: evitar reescrituras innecesarias del estado persistido en cada cotización.
 _VOLATILE_FIELDS = ("bid", "ask", "typical_spread_pips")
 
 
@@ -266,11 +266,11 @@ def catalog_hash(entries: list) -> str:
 
 def should_publish(previous: Optional[dict], catalog: dict,
                    max_age_hours: float = 24.0) -> bool:
-    """¿Merece la pena escribir el catálogo en Firestore?
+    """¿Merece la pena actualizar el catálogo persistido?
 
     Solo si cambió su contenido estructural, si cambió de cuenta, o si el
-    publicado ya es viejo. Sin esta puerta el worker gastaría toda la cuota diaria
-    de escrituras reescribiendo la misma lista cada cinco minutos.
+    publicado ya es viejo. Así se evita reescribir la misma lista ante cada
+    actualización de precios.
     """
     if not previous:
         return True
@@ -297,10 +297,9 @@ def build_catalog(rows: Iterable[Any], connection: str,
     """Documento de catálogo listo para ``store.set_state('instrument_catalog')``.
 
     Los operables (``subscription_status == 'T'``) van primero para que el
-    truncado, si ocurre, no se coma justo lo que el usuario puede usar. El límite
-    de un documento Firestore es 1 MiB y la tabla OFFERS de una cuenta completa
-    ronda las 2.000 filas, así que el corte se marca de forma explícita en
-    ``truncated`` en vez de perder entradas en silencio.
+    truncado, si ocurre, no se coma justo lo que el usuario puede usar. El corte
+    mantiene acotados el estado persistido y la respuesta de la API, y se marca
+    de forma explícita en ``truncated`` en vez de perder entradas en silencio.
     """
     sizes = base_unit_sizes or {}
     entries = []
@@ -342,6 +341,7 @@ def spec_from_entry(entry: dict) -> InstrumentSpec:
         quote_currency=str(entry.get("quote_currency", "USD")),
         asset_class=str(entry.get("asset_class", FOREX)),
         digits=max(int(entry.get("digits", 5)), 0),
+        contract_multiplier=max(float(entry.get("contract_multiplier", 1.0)), 1e-12),
     )
 
 

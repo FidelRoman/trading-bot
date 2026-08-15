@@ -142,6 +142,7 @@ class FxcmBroker:
         pip = pip_from_offer(offer, asset_class)
         bid, ask = float(offer.bid), float(offer.ask)
         spread = round((ask - bid) / pip, 2) if pip > 0 and ask > bid else 0.0
+        multiplier = float(getattr(offer, "contract_multiplier", 0.0) or 1.0)
         return InstrumentSpec(
             symbol=self.instrument,
             pip=pip,
@@ -151,6 +152,7 @@ class FxcmBroker:
                                or self.instrument.partition("/")[2] or "USD").upper(),
             asset_class=asset_class,
             digits=int(getattr(offer, "digits", 5) or 5),
+            contract_multiplier=max(multiplier, 1e-12),
         )
 
     @property
@@ -196,7 +198,8 @@ class FxcmBroker:
 
     @property
     def connected(self) -> bool:
-        return self._fx is not None and "CONNECTED" in self.last_status
+        with self._lock:
+            return self._fx is not None and "CONNECTED" in self.last_status
 
     def _fx_or_raise(self) -> ForexConnect:
         if self._fx is None:
@@ -226,7 +229,11 @@ class FxcmBroker:
         """
         tf = self._TF_FXCM.get(timeframe.lower(), timeframe)
         with self._lock:
-            fx = self._fx_or_raise()
+            # No se comprueba ``connected`` antes del lock: disconnect() puede
+            # limpiar ``_fx`` entre ambas operaciones.
+            fx = self._fx
+            if fx is None:
+                return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
             history = fx.get_history(symbol or self.instrument, tf, date_from, date_to, count)
         df = pd.DataFrame(history)
         if df.empty:
@@ -351,7 +358,12 @@ class FxcmBroker:
 
     def open_trades(self) -> list[dict]:
         with self._lock:
-            fx = self._fx_or_raise()
+            # La consulta de estado y la captura de sesión deben ser atómicas.
+            # De otro modo el dashboard puede leer CONNECTED justo antes de que
+            # disconnect() ponga _fx a None y terminar en un 500.
+            fx = self._fx
+            if fx is None:
+                return []
             table = fx.get_table(ForexConnect.TRADES)
             rows = []
             for t in table:
@@ -371,6 +383,22 @@ class FxcmBroker:
                     }
                 )
             return rows
+
+    def all_open_trades(self) -> list[dict]:
+        """Todas las posiciones de la cuenta, sin filtrar por instrumento."""
+        with self._lock:
+            fx = self._fx
+            if fx is None:
+                return []
+            return [
+                {
+                    "trade_id": str(t.trade_id),
+                    "instrument": str(t.instrument),
+                    "side": "long" if t.buy_sell == fxcorepy.Constants.BUY else "short",
+                    "units": int(t.amount),
+                }
+                for t in fx.get_table(ForexConnect.TRADES)
+            ]
 
     def closed_trade_info(self, trade_id: str) -> Optional[dict]:
         """Datos de cierre desde CLOSED_TRADES, o None si aún no aparece."""
@@ -569,7 +597,11 @@ class FxcmBroker:
             # El coste se estima con el spread vigente sobre las unidades movidas;
             # el P&L real lo liquida el bróker y se ve en account_info().
             prices = self.current_prices()
-            coste = abs(delta) * max(float(prices["ask"]) - float(prices["bid"]), 0.0)
+            coste = (
+                abs(delta)
+                * max(float(prices["ask"]) - float(prices["bid"]), 0.0)
+                * self.spec.contract_multiplier
+            )
         log.warning("Posición neta %s: %d -> %d (%d unidades, %d órdenes)",
                     self.instrument, actual, objetivo, delta, len(ordenes))
         return {"traded_units": delta, "price": precio, "cost": round(coste, 4),

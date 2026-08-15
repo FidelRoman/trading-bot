@@ -102,6 +102,13 @@ def test_borrar_limpia_solo_su_entrada(tmp_path):
     assert reg.active_id("XAU/USD") == "oro-1"
 
 
+@pytest.mark.parametrize("run_id", ["..", ".", "../fuera", "a/b", ""])
+def test_run_id_no_puede_salir_del_registro(tmp_path, run_id):
+    reg = ModelRegistry(tmp_path / "models")
+    with pytest.raises(ValueError, match="run_id inválido"):
+        reg.path_for(run_id)
+
+
 def test_lee_el_formato_antiguo_de_puntero_unico(tmp_path):
     """Un active.json de la versión anterior no debe tumbar el arranque."""
     reg = ModelRegistry(tmp_path)

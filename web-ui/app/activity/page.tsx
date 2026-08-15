@@ -10,6 +10,7 @@ import { useLive } from "@/lib/live";
 export default function Activity() {
   const { candleVersion } = useLive();
   const [equity, setEquity] = useState<{ time: number; value: number }[]>([]);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     getJSON<{ ts: string; equity: number }[]>("/api/equity")
@@ -22,17 +23,17 @@ export default function Activity() {
         }
         setEquity(data);
       })
-      .catch(() => {});
+      .catch(() => setError("No se pudo cargar la curva de capital."));
   }, [candleVersion]);
 
   return (
     <>
       <div className="card mb">
-        <div className="card-head"><div className="card-title">∿ EQUITY CURVE</div></div>
-        <AreaChart data={equity} />
+        <div className="card-head"><div className="card-title">CURVA DE CAPITAL</div></div>
+        {error ? <div className="inline-alert" role="alert">{error}</div> : <AreaChart data={equity} label="Curva de capital de la cuenta" />}
       </div>
       <div className="card">
-        <div className="card-head"><div className="card-title">▤ ACTIVITY MONITOR</div></div>
+        <div className="card-head"><div className="card-title">MONITOR DE ACTIVIDAD</div></div>
         <LogsPanel grow />
       </div>
     </>

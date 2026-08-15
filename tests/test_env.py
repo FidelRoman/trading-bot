@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from tradingbot.config import INSTRUMENTS, PIP
+from tradingbot.config import INSTRUMENTS, PIP, InstrumentSpec
 from tradingbot.metrics import evaluate
 from tradingbot.rl.env import EnvParams, FxTradingEnv, target_position, transaction_cost
 
@@ -69,6 +69,28 @@ def test_el_coste_usa_el_pip_del_instrumento():
 
     assert transaction_cost(1_000, eurusd) == pytest.approx(0.1)
     assert transaction_cost(1_000, usdjpy) == pytest.approx(10.0)
+
+
+def test_coste_y_recompensa_aplican_multiplicador_de_contrato():
+    contrato = InstrumentSpec(
+        "IDX", pip=0.01, min_lot=1, typical_spread_pips=1,
+        asset_class="index", contract_multiplier=10,
+    )
+    params = EnvParams(
+        instrument=contrato,
+        min_trade_amount=1_000,
+        max_trade_amount=1_000,
+        max_units=1_000,
+        spread_pips=1,
+    )
+    env = FxTradingEnv(np.zeros((2, 4), dtype=np.float32), np.array([100.0, 101.0]), params)
+
+    _, reward, _, info = env.step(COMPRAR)
+
+    # 1.000 USD / (100 * multiplicador 10) = 1 contrato.
+    assert info.position == 1
+    assert info.cost == pytest.approx(0.1)
+    assert reward == pytest.approx(9.9)
 
 
 def test_la_exposicion_nunca_supera_el_maximo():

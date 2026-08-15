@@ -48,7 +48,8 @@ function Curve({ points, pick, color, label }: {
         <span>{label}</span>
         <span>{min.toFixed(2)} … {max.toFixed(2)}</span>
       </div>
-      <svg viewBox={`0 0 100 ${h}`} preserveAspectRatio="none"
+      <svg viewBox={`0 0 100 ${h}`} preserveAspectRatio="none" role="img"
+           aria-label={`${label}: mínimo ${min.toFixed(2)}, máximo ${max.toFixed(2)}, ${serie.length} puntos`}
            style={{ width: "100%", height: h, display: "block" }}>
         <polyline points={pts} fill="none" stroke={color} strokeWidth="1.4"
                   vectorEffect="non-scaling-stroke" />
@@ -132,7 +133,8 @@ export default function TrainPage() {
   const corriendo = job?.status === "running";
   // Los CSV se llaman <slug>_<tf>_<desde>_<hasta>.csv. Entrenar EUR/USD con el
   // histórico del oro produce un modelo mal etiquetado que nadie detecta después.
-  const desajuste = !!dataset && !!instrumento && !dataset.startsWith(`${slug(instrumento)}_`);
+  const desajuste = !!dataset && !!instrumento &&
+    !dataset.startsWith(`${slug(instrumento)}_${timeframe.toLowerCase()}_`);
   const curva = useMemo(() => job?.curve ?? [], [job]);
   const bateReferencia =
     job?.test_metrics?.crr != null && job?.benchmark_metrics?.crr != null &&
@@ -187,7 +189,7 @@ export default function TrainPage() {
       <div className="card">
         <div className="card-head">
           <div className="card-title">◈ NUEVO ENTRENAMIENTO</div>
-          <button className="btn primary" onClick={lanzar} disabled={corriendo || !dataset}>
+          <button className="btn primary" onClick={lanzar} disabled={corriendo || !dataset || desajuste}>
             {corriendo ? "EN CURSO…" : "ENTRENAR"}
           </button>
         </div>
@@ -228,11 +230,11 @@ export default function TrainPage() {
 
         {desajuste && (
           <div className="picker-warn" style={{ margin: "0 12px 10px" }}>
-            El histórico <strong>{dataset}</strong> no parece de{" "}
-            <strong>{instrumento}</strong>. El modelo quedaría etiquetado con un
-            instrumento y entrenado con los precios de otro, y al operarlo se
-            dimensionaría con la ficha equivocada. Descarga el histórico correcto
-            con <code>scripts/download_history.py --symbols {instrumento}</code>.
+            El histórico <strong>{dataset}</strong> no corresponde a{" "}
+            <strong>{instrumento} {timeframe.toUpperCase()}</strong>. El backend no
+            permite etiquetar un modelo con precios de otro instrumento o reloj.
+            Descarga el histórico correcto con <code>scripts/download_history.py
+            --symbols {instrumento} --timeframes {timeframe}</code>.
           </div>
         )}
 
@@ -247,7 +249,7 @@ export default function TrainPage() {
             con <code>uv run python scripts/download_history.py --symbols {instrumento || "EUR/USD"} --timeframes {timeframe} --years 3</code>.</>
           )}
         </div>
-        {error && <div className="empty neg">{error}</div>}
+          {error && <div className="empty neg" role="alert">{error}</div>}
       </div>
 
       {corriendo && (
@@ -260,8 +262,8 @@ export default function TrainPage() {
             </div>
             <span className="chip">{Math.round((job?.progress ?? 0) * 100)}%</span>
           </div>
-          <div style={{ padding: "0 12px 12px" }}>
-            <div style={{ height: 6, background: "rgba(148,163,184,.15)", borderRadius: 3 }}>
+          <div style={{ padding: "0 12px 12px" }} role="status" aria-live="polite">
+            <div className="progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((job?.progress ?? 0) * 100)}>
               <div style={{
                 width: `${(job?.progress ?? 0) * 100}%`, height: "100%",
                 background: "#4ade80", borderRadius: 3, transition: "width .4s",

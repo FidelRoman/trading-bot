@@ -26,11 +26,16 @@ def main() -> None:
     ap.add_argument("--synthetic", action="store_true", help="datos sintéticos (prueba de pipeline)")
     ap.add_argument("--months", type=int, default=24, help="meses de histórico FXCM")
     ap.add_argument("--tf", type=str, default="m15", help="timeframe: m5/m15/m30/h1/h4/d1")
+    ap.add_argument("--strategy", type=str, default="bollinger",
+                    choices=["bollinger", "rsi", "wyckoff_1"],
+                    help="estrategia por regla (bollinger, rsi, wyckoff_1)")
     ap.add_argument("--equity", type=float, default=10_000.0)
     ap.add_argument("--spread", type=float, default=1.2, help="spread en pips")
     args = ap.parse_args()
 
     settings = load_settings()
+    from dataclasses import replace
+    strat_params = replace(settings.strategy, active_strategy=args.strategy, timeframe=args.tf)
     if args.csv:
         df = load_csv(args.csv, timeframe=args.tf)
         source = f"CSV {args.csv} ({args.tf})"
@@ -55,10 +60,10 @@ def main() -> None:
             broker.disconnect()
         source = f"FXCM {args.months} meses ({args.tf})"
 
-    print(f"\nBacktest sobre {len(df)} velas m15 — fuente: {source}")
+    print(f"\nBacktest ({args.strategy}) sobre {len(df)} velas {args.tf} — fuente: {source}")
     result = run_backtest(
         df,
-        strategy_params=settings.strategy,
+        strategy_params=strat_params,
         risk=settings.risk,
         initial_equity=args.equity,
         spread_pips=args.spread,

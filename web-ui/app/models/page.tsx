@@ -6,6 +6,7 @@
 
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { apiFetch, getJSON, postJSON } from "@/lib/api";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import { MetricsHead, MetricsRow } from "@/components/metrics";
 import TrainingParams from "@/components/TrainingParams";
 import { isoShort } from "@/lib/format";
@@ -47,6 +48,8 @@ export default function ModelsPage() {
   const [vista, setVista] = useState<"models" | "ranking">("models");
   const [seleccion, setSeleccion] = useState<MarketSelection | null>(null);
   const [cargandoRanking, setCargandoRanking] = useState(true);
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const cargar = useCallback(async () => {
     try {
@@ -86,12 +89,14 @@ export default function ModelsPage() {
   );
 
   const activar = async (runId: string) => {
-    const r = await postJSON<{ ok: boolean; error?: string; instrument?: string }>(
+    const r = await postJSON<{ ok: boolean; error?: string; instrument?: string; meets_acceptance?: boolean }>(
       `/api/models/${runId}/activate`
     );
     // El instrumento lo decide el modelo, no el filtro que esté puesto: si no se
     // dijera, activar desde "Todos" parecería haber armado el símbolo en pantalla.
-    setAviso(r.ok ? `Modelo activo para ${r.instrument}: ${runId}` : r.error ?? "No se pudo activar");
+    setAviso(r.ok
+      ? `Modelo activo para ${r.instrument}: ${runId}. ${r.meets_acceptance ? "Cumple el criterio de aceptación." : "No cumple el criterio; operará bajo tu responsabilidad."}`
+      : r.error ?? "No se pudo activar");
     await cargar();
     await refreshStatus();
   };
@@ -111,10 +116,20 @@ export default function ModelsPage() {
     setComparando(null);
   };
 
-  const borrar = async (runId: string) => {
-    await apiFetch(`/api/models/${runId}`, { method: "DELETE" });
-    setAviso(`Modelo ${runId} eliminado`);
-    await cargar();
+  const borrar = async () => {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    try {
+      const response = await apiFetch(`/api/models/${pendingDelete}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("No se pudo eliminar el modelo.");
+      setAviso(`Modelo ${pendingDelete} eliminado`);
+      setPendingDelete(null);
+      await cargar();
+    } catch (cause) {
+      setAviso(cause instanceof Error ? cause.message : "No se pudo eliminar el modelo.");
+    } finally {
+      setDeleting(false);
+    }
   };
 
   return (
@@ -126,6 +141,7 @@ export default function ModelsPage() {
               className="btn"
               role="tab"
               aria-selected={vista === "models"}
+              aria-controls="models-view"
               onClick={() => setVista("models")}
             >
               MODELOS
@@ -134,6 +150,7 @@ export default function ModelsPage() {
               className="btn"
               role="tab"
               aria-selected={vista === "ranking"}
+              aria-controls="ranking-view"
               onClick={() => setVista("ranking")}
             >
               ÚLTIMO RANKING
@@ -155,7 +172,7 @@ export default function ModelsPage() {
         </div>
       </div>
 
-      {vista === "models" && <>
+      {vista === "models" && <div id="models-view" role="tabpanel">
       <div className="metric-row inner">
         <div className="metric-card">
           <div className="m-lbl">MODELOS</div>
@@ -207,7 +224,7 @@ export default function ModelsPage() {
           <div className="card-title">⧉ MODELOS ENTRENADOS</div>
         </div>
 
-        {aviso && <div className="hint" style={{ padding: "6px 12px" }}>{aviso}</div>}
+        {aviso && <div className="hint" style={{ padding: "6px 12px" }} role="status" aria-live="polite">{aviso}</div>}
 
         <div className="table-wrap">
           <table>
@@ -226,7 +243,7 @@ export default function ModelsPage() {
                         onClick={() => setDetalle(detalle === m.run_id ? null : m.run_id)}
                         title="Ver detalle"
                       >
-                        {m.is_active ? "★ " : ""}{m.run_id}
+                        {m.is_active ? "★ " : ""}{m.run_id}{m.meets_acceptance ? "" : " · NO VALIDADO"}
                       </button>
                     }
                     metrics={m.test_metrics}
@@ -245,7 +262,7 @@ export default function ModelsPage() {
                         </button>
                         <button
                           className="btn danger"
-                          onClick={() => borrar(m.run_id)}
+                          onClick={() => setPendingDelete(m.run_id)}
                           aria-label={`Eliminar modelo ${m.run_id}`}
                         >✕</button>
                       </span>,
@@ -337,10 +354,10 @@ export default function ModelsPage() {
           )}
         </div>
       )}
-      </>}
+      </div>}
 
       {vista === "ranking" && (
-        <div className="card">
+        <div className="card" id="ranking-view" role="tabpanel">
           <div className="card-head">
             <div className="card-title">RANKING DE VALIDACIÓN</div>
             {seleccion?.created_at && (
@@ -408,6 +425,16 @@ export default function ModelsPage() {
           )}
         </div>
       )}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="Eliminar modelo"
+        description={<>Se eliminará <strong>{pendingDelete}</strong>. Esta acción no se puede deshacer.</>}
+        confirmLabel="ELIMINAR MODELO"
+        danger
+        busy={deleting}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={borrar}
+      />
     </>
   );
 }

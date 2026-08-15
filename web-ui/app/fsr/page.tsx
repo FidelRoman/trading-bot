@@ -39,7 +39,8 @@ function Spark({
   const yZero = height - ((0 - min) / span) * height;
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none"
+    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img"
+         aria-label={`Serie de ${series.length} puntos, mínimo ${min.toFixed(3)} y máximo ${max.toFixed(3)}`}
          style={{ width: "100%", height, display: "block" }}>
       {zero && min < 0 && max > 0 && (
         <line x1="0" y1={yZero} x2={width} y2={yZero}
@@ -62,7 +63,8 @@ function Overlay({ prices, signal }: { prices: number[]; signal: number[] }) {
     s.map((v, i) => `${((i / (s.length - 1)) * 100).toFixed(2)},${(h - ((v - min) / span) * h).toFixed(2)}`).join(" ");
 
   return (
-    <svg viewBox={`0 0 100 ${h}`} preserveAspectRatio="none"
+    <svg viewBox={`0 0 100 ${h}`} preserveAspectRatio="none" role="img"
+         aria-label="Comparación entre el precio original y la señal FSR reconstruida"
          style={{ width: "100%", height: h, display: "block" }}>
       <polyline points={line(prices)} fill="none" stroke="rgba(148,163,184,.55)"
                 strokeWidth="1" vectorEffect="non-scaling-stroke" />
@@ -134,7 +136,8 @@ export default function FsrPage() {
         <div className="card-head">
           <div className="card-title">∿ SEÑAL RECONSTRUIDA vs PRECIO</div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <select value={tf} onChange={(e) => setTf(e.target.value)}>
+            <label className="sr-only" htmlFor="fsr-timeframe">Temporalidad de la señal FSR</label>
+            <select id="fsr-timeframe" value={tf} onChange={(e) => setTf(e.target.value)}>
               {TIMEFRAMES.map((t) => <option key={t} value={t}>{t.toUpperCase()}</option>)}
             </select>
             <button className="btn" onClick={() => cargar(tf)} disabled={cargando}>
@@ -170,8 +173,8 @@ export default function FsrPage() {
         </div>
 
         {corriendo && job?.kind === "precompute" && (
-          <div style={{ padding: "0 12px 10px" }}>
-            <div style={{ height: 6, background: "rgba(148,163,184,.15)", borderRadius: 3 }}>
+          <div style={{ padding: "0 12px 10px" }} role="status" aria-live="polite">
+            <div className="progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((job.progress ?? 0) * 100)}>
               <div style={{
                 width: `${(job.progress ?? 0) * 100}%`, height: "100%",
                 background: "#4ade80", borderRadius: 3, transition: "width .4s",

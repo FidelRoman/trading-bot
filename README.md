@@ -1,6 +1,6 @@
-# FSRPPO·BOT — EUR/USD H1 sobre FXCM
+# FSRPPO·BOT — operación multi-instrumento sobre FXCM
 
-Bot de trading para EUR/USD que implementa la estrategia **FSRPPO** del paper
+Bot de trading multi-instrumento que implementa la estrategia **FSRPPO** del paper
 *"An adaptive financial trading strategy based on proximal policy optimization and
 financial signal representation"* (Lin Wang, Xuerui Wang — *Engineering Applications
 of Artificial Intelligence* 138 (2024) 109365), con dashboard web en tiempo real.
@@ -87,8 +87,10 @@ estático que sirve el propio backend FastAPI, de modo que interfaz, `/api/*` y
 
 ## Resultados de la validación (2026-08-09)
 
-**FSRPPO no supera el criterio de aceptación en EUR/USD H1. El bot no tiene
-ningún modelo activo y no operará hasta que eso cambie.**
+**FSRPPO no supera el criterio de aceptación en EUR/USD H1.** El repositorio
+conserva un modelo histórico activo para poder ejecutar pruebas operativas. La
+aplicación permite usarlo —también en Real— bajo responsabilidad explícita del
+operador y lo rotula como no validado; esta condición no bloquea órdenes.
 
 Datos: 12.659 velas H1 reales de FXCM (2024-07-08 → 2026-07-08). Train hasta
 2026-01-08 (9.458 barras), test 2026-01-08 → 2026-07-08 (3.152 barras). Spread
@@ -138,7 +140,8 @@ es donde el método está validado.
 
 ## Requisitos
 
-- macOS ARM64 (o Linux x64 con Python 3.7 — ver wheels de `forexconnect`)
+- macOS ARM64 con Python 3.10 para el wheel local de `forexconnect`
+- Node.js 24.11.1 recomendado (`nvm use` lee `.nvmrc`; Next exige ≥20.9)
 - [uv](https://docs.astral.sh/uv/)
 - Cuenta FXCM **demo** (gratis en fxcm.com) para datos en vivo — opcional: sin
   credenciales el bot arranca en modo **SIMULADO**
@@ -161,7 +164,11 @@ ARM64. Hay que re-ejecutar `fix_forexconnect_macos.sh` después de cada `uv sync
 ```bash
 uv run pytest                                  # batería completa
 
-# Backend: interfaz + API + bot en un solo puerto (MOCK=1 = simulado sin credenciales)
+# Modo Simulado (pruebas locales, sin credenciales o en fines de semana):
+MOCK=1 uv run uvicorn tradingbot.web.app:app --port 8000 \
+  --proxy-headers --forwarded-allow-ips="*"
+
+# Modo Conectado FXCM (Demo/Real según .env):
 caffeinate -s uv run uvicorn tradingbot.web.app:app --port 8000 \
   --proxy-headers --forwarded-allow-ips="*"
 ```

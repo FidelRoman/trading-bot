@@ -189,6 +189,7 @@ def train(
     instrument: str = "EUR/USD",
     registry: ModelRegistry | None = None,
     run_id: str | None = None,
+    data_manifest: dict | None = None,
     on_iteration: Callable[[IterationStats], None] | None = None,
 ) -> TrainingOutcome:
     """Entrena sobre ``train_set`` y evalúa sobre ``test_set``, sin mirarlo antes.
@@ -230,6 +231,7 @@ def train(
         test_metrics=test_replay.metrics.as_dict() | {"trades": test_replay.trades},
         benchmark_metrics=benchmark.metrics.as_dict() | {"strategy": "buy_and_hold"},
         feature_scale=env_cfg.feature_scale,
+        data_manifest=data_manifest or {},
     )
 
     reg.save(record, agent.state_dict())

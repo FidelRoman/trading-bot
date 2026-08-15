@@ -46,7 +46,7 @@ def main() -> None:
 
     results = []
     for bb_std, slm, width in itertools.product(*GRID.values()):
-        p = StrategyParams(bb_std=bb_std, sl_atr_mult=slm, min_band_width_pips=width)
+        p = StrategyParams(active_strategy="bollinger", bb_std=bb_std, sl_atr_mult=slm, min_band_width_pips=width)
         s = run(train, p)
         if s["trades"] >= MIN_TRADES_TRAIN and s["profit_factor"] is not None:
             results.append((p, s))
@@ -65,7 +65,7 @@ def main() -> None:
               f"{s_test['trades']:>5} {s_test['max_drawdown_pct']:>7}")
 
     # Baseline actual
-    base = StrategyParams()
+    base = StrategyParams(active_strategy="bollinger")
     bt, be = run(train, base), run(test, base)
     print(f"\nBaseline BB(20,2) SL1.5 sin filtro: "
           f"TRAIN PF {bt['profit_factor']} ret {bt['return_pct']}% | "

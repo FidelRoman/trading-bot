@@ -94,6 +94,15 @@ def test_orden_manual_convierte_lotes_segun_la_clase_de_activo(tmp_path):
     assert eng2.manual_order("long", 10, 1.0, 2.0)["units"] == 10
 
 
+def test_orden_manual_rechaza_tamanos_no_finitos_o_sobre_el_tope(tmp_path, monkeypatch):
+    eng = make_engine(tmp_path)
+    monkeypatch.setenv("MAX_MANUAL_LOTS", "25")
+
+    assert eng.manual_order("long", float("nan"), 1.0, 2.0)["ok"] is False
+    assert eng.manual_order("long", 26, 1.0, 2.0)["ok"] is False
+    assert eng.manual_order("long", 1, float("inf"), 2.0)["ok"] is False
+
+
 def test_policy_se_niega_a_operar_un_modelo_de_otro_instrumento(tmp_path, monkeypatch):
     """Defensa por si el mapa de activos y el meta.json discrepan.
 

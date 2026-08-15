@@ -11,10 +11,18 @@ from tradingbot.mock import MockBroker
 from tradingbot.store import Store
 from tradingbot.web.app import (
     _make_broker,
+    _real_acknowledged,
     _selected_symbol,
+    app,
+    control,
     execution_mode,
     pause_if_real,
 )
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
 
 
 @pytest.fixture(autouse=True)
@@ -46,6 +54,55 @@ def test_live_si_hay_credenciales(monkeypatch):
     monkeypatch.setenv("FXCM_USER", "algo")
     monkeypatch.setenv("FXCM_PASS", "algo")
     assert execution_mode() == "live"
+
+
+def test_consentimiento_real_exige_booleano_explicito():
+    assert _real_acknowledged({"acknowledge_real": True}) is True
+    assert _real_acknowledged({"acknowledge_real": "true"}) is False
+    assert _real_acknowledged({}) is False
+
+
+@pytest.mark.anyio
+async def test_api_permite_iniciar_real_bajo_responsabilidad_sin_validar_modelo():
+    class StoreFalso:
+        def __init__(self):
+            self.logs = []
+
+        def log(self, level, message):
+            self.logs.append((level, message))
+
+    class EngineFalso:
+        def __init__(self):
+            self.resumed = False
+            self.store = StoreFalso()
+
+        def resume(self):
+            self.resumed = True
+
+        def status(self):
+            return {"paused": not self.resumed}
+
+    class HubFalso:
+        async def broadcast(self, payload):
+            return None
+
+    previous = dict(app.state._state)
+    try:
+        engine = EngineFalso()
+        app.state.engine = engine
+        app.state.broker = type("BrokerReal", (), {"mode": "fxcm-real"})()
+        app.state.hub = HubFalso()
+
+        rejected = await control("resume", {})
+        accepted = await control("resume", {"acknowledge_real": True})
+
+        assert rejected["requires_real_ack"] is True
+        assert engine.resumed is True
+        assert accepted["ok"] is True
+        assert any("OPERADOR CONFIRMÓ" in message for _, message in engine.store.logs)
+    finally:
+        app.state._state.clear()
+        app.state._state.update(previous)
 
 
 def test_mock_gana_a_credenciales(monkeypatch):

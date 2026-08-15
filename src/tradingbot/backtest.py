@@ -119,8 +119,9 @@ def run_backtest(
             if hit:
                 exit_price, reason = hit
                 direction = 1 if pos["side"] == LONG else -1
-                pnl = direction * (exit_price - pos["entry"]) * pos["units"]
-                pnl -= spread_cost_price * pos["units"]
+                pnl = (direction * (exit_price - pos["entry"]) * pos["units"]
+                       * spec.contract_multiplier)
+                pnl -= spread_cost_price * pos["units"] * spec.contract_multiplier
                 pips = direction * (exit_price - pos["entry"]) / pip - spread_pips
                 equity += pnl
                 trades.append(
@@ -173,7 +174,12 @@ def run_backtest(
                 if fixed_units > 0:
                     units = fixed_units
                 else:
-                    units = size_position(equity, risk.risk_per_trade, stop_distance, risk.min_lot)
+                    # El mínimo operable es del instrumento, no de la configuración
+                    # de riesgo: con el micro-lote de divisas (1.000) sobre un
+                    # activo a 4.000, cada posición redondea a 0 y el backtest
+                    # sale "sin operaciones" sin decir por qué.
+                    units = size_position(equity, risk.risk_per_trade, stop_distance,
+                                          spec.min_lot, spec.contract_multiplier)
                 # TP debe quedar del lado correcto tras el gap de apertura
                 tp_valid = tp > entry if side == LONG else tp < entry
                 if units > 0 and tp_valid:
@@ -193,7 +199,11 @@ def run_backtest(
         ts = idx[-1].to_pydatetime()
         last_close = float(d["close"].iloc[-1])
         direction = 1 if pos["side"] == LONG else -1
-        pnl = direction * (last_close - pos["entry"]) * pos["units"] - spread_cost_price * pos["units"]
+        pnl = (
+            direction * (last_close - pos["entry"]) * pos["units"]
+            * spec.contract_multiplier
+            - spread_cost_price * pos["units"] * spec.contract_multiplier
+        )
         equity += pnl
         trades.append(
             BtTrade(
@@ -284,7 +294,12 @@ def download_history(
     df = df[~df.index.duplicated(keep="first")].sort_index()
     if cache_dir is not None:
         cache_dir.mkdir(parents=True, exist_ok=True)
-        df.to_csv(cache_dir / f"eurusd_{timeframe}_{date_from:%Y%m%d}_{date_to:%Y%m%d}.csv")
+        # El nombre lleva el símbolo REAL del bróker. Estaba fijo a "eurusd", así
+        # que un backtest de oro dejaba precios de 4.000 en un archivo llamado
+        # eurusd_*.csv y luego nadie entendía de dónde salían.
+        simbolo = str(getattr(broker, "instrument", None) or "desconocido")
+        slug = simbolo.replace("/", "").lower()
+        df.to_csv(cache_dir / f"{slug}_{timeframe}_{date_from:%Y%m%d}_{date_to:%Y%m%d}.csv")
     return df[["open", "high", "low", "close"]]
 
 

@@ -9,6 +9,7 @@ Ejemplo:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -101,13 +102,27 @@ def main() -> int:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     candidates: list[dict[str, Any]] = []
     held_out: dict[tuple[str, str], Dataset] = {}
+    sources: dict[tuple[str, str], tuple[Path, Any]] = {}
+
+    # Todos los mercados se comparan sobre la misma ventana cronológica. Elegir
+    # "el CSV más nuevo" por mercado sin recortar la intersección comparaba años
+    # y regímenes distintos con una métrica aparentemente homogénea.
+    for symbol in symbols:
+        for timeframe in timeframes:
+            csv_path = _csv_for(args.history_dir, symbol, timeframe)
+            candles = load_csv(csv_path, timeframe=timeframe)
+            sources[(symbol, timeframe)] = (csv_path, candles)
+    common_start = max(candles.index[0] for _, candles in sources.values())
+    common_end = min(candles.index[-1] for _, candles in sources.values())
+    if common_start >= common_end:
+        raise SystemExit("los históricos no comparten una ventana temporal")
 
     for symbol in symbols:
         spec = get_instrument_spec(symbol)
         for timeframe in timeframes:
-            csv_path = _csv_for(args.history_dir, symbol, timeframe)
+            csv_path, full_candles = sources[(symbol, timeframe)]
             print(f"\n{symbol} {timeframe.upper()} · {csv_path.name}")
-            candles = load_csv(csv_path, timeframe=timeframe)
+            candles = full_candles.loc[common_start:common_end]
             dataset = build_dataset(candles, fsr, workers=args.workers)
             train_set, validation_set, test_set = dataset.split_three_way()
             held_out[(symbol, timeframe)] = test_set
@@ -149,6 +164,7 @@ def main() -> int:
                 "symbol": symbol,
                 "timeframe": timeframe,
                 "csv": csv_path.name,
+                "csv_sha256": hashlib.sha256(csv_path.read_bytes()).hexdigest(),
                 "ranges": {
                     "train": [str(train_set.timestamps[0]), str(train_set.timestamps[-1])],
                     "validation": [str(validation_set.timestamps[0]), str(validation_set.timestamps[-1])],
@@ -164,7 +180,28 @@ def main() -> int:
             })
 
     ranking = rank_markets(candidates)
-    symbol, timeframe = winner_key(ranking)
+    try:
+        symbol, timeframe = winner_key(ranking)
+    except ValueError as exc:
+        document = {
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "protocol": {"train": 0.60, "validation": 0.20, "test": 0.20},
+            "common_range": [str(common_start), str(common_end)],
+            "settings": {
+                "symbols": symbols,
+                "timeframes": timeframes,
+                "seeds": args.seeds,
+            },
+            "ranking": ranking,
+            "winner": None,
+            "test": {"status": "not_opened", "reason": str(exc)},
+        }
+        args.output_dir.mkdir(parents=True, exist_ok=True)
+        output = args.output_dir / f"{stamp}.json"
+        output.write_text(json.dumps(_json_safe(document), indent=2, ensure_ascii=False) + "\n")
+        print(f"\nSIN GANADOR: {exc}")
+        print(f"Auditoría: {output}")
+        return 2
     winning = next(row for row in ranking if row["winner"])
     test_set = held_out[(symbol, timeframe)]
 
@@ -195,6 +232,7 @@ def main() -> int:
     document = {
         "created_at": datetime.now(timezone.utc).isoformat(),
         "protocol": {"train": 0.60, "validation": 0.20, "test": 0.20},
+        "common_range": [str(common_start), str(common_end)],
         "settings": {
             "symbols": symbols,
             "timeframes": timeframes,
@@ -222,7 +260,7 @@ def main() -> int:
     print("\nRANKING DE VALIDACIÓN")
     for row in ranking:
         marker = "★" if row["winner"] else " "
-        status = "apta" if row["eligible"] else "CRR ≤ B&H"
+        status = "apta" if row["eligible"] else "no supera Sharpe > 0 y CRR > B&H"
         print(
             f"{marker} {row['rank']:2d}. {row['symbol']:7s} {row['timeframe'].upper():3s} "
             f"Sharpe {row['validation']['median_sharpe']:8.3f} · "

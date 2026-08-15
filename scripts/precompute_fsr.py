@@ -22,7 +22,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tradingbot.config import PROJECT_ROOT, FsrParams  # noqa: E402
 from tradingbot.fsr.cache import DEFAULT_WORKERS, cache_path, cached_features  # noqa: E402
 
-DEFAULT_CSV = PROJECT_ROOT / "data" / "history" / "eurusd_h1_20240708_20260708.csv"
+def default_csv() -> Path:
+    history_dir = PROJECT_ROOT / "data" / "history"
+    matches = sorted(history_dir.glob("eurusd_h1_*.csv"))
+    if matches:
+        return matches[-1]
+    return history_dir / "eurusd_h1_20240811_20260811.csv"
 
 
 def _format_eta(seconds: float) -> str:
@@ -32,7 +37,7 @@ def _format_eta(seconds: float) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--csv", type=Path, default=DEFAULT_CSV, help="CSV con columna 'close'")
+    parser.add_argument("--csv", type=Path, default=default_csv(), help="CSV con columna 'close'")
     parser.add_argument("-j", "--workers", type=int, default=DEFAULT_WORKERS,
                         help=f"procesos en paralelo (por defecto {DEFAULT_WORKERS}, la mitad de los núcleos)")
     parser.add_argument("--window", type=int, default=FsrParams.window)

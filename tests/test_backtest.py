@@ -127,3 +127,30 @@ def test_wyckoff_backtest_execution():
     assert t.side == "long"
     assert t.entry == pytest.approx(df["open"].iloc[21])
     assert t.reason in ("tp", "end")
+
+
+def test_el_lote_minimo_sale_del_instrumento_no_del_riesgo():
+    """Regresión: un activo caro con el micro-lote de divisas no operaba nunca.
+
+    `size_position` redondea hacia abajo al lote mínimo. Con el de divisas (1.000)
+    sobre un instrumento a ~4.000, el riesgo del 0,5 % de una cuenta de 10.000 da
+    ~1,4 unidades, que redondean a 0: el backtest salía "sin operaciones" sin
+    decir por qué. El mínimo tiene que ser el del instrumento.
+
+    Se reescala el escenario de Bollinger que ya se usa arriba, para que la
+    geometría de la señal sea idéntica y lo único que cambie sea el precio.
+    """
+    from tradingbot.config import INSTRUMENT_SEEDS
+
+    oro = INSTRUMENT_SEEDS["XAU/USD"]
+    assert oro.min_lot == 1
+
+    escala = 4000 / 1.1
+    df = long_scenario_df() * escala
+
+    con_ficha_de_divisas = run_backtest(df, P, R, initial_equity=EQ0, spread_pips=SPREAD)
+    con_su_ficha = run_backtest(df, P, R, initial_equity=EQ0, spread_pips=SPREAD, spec=oro)
+
+    # Con el mínimo de divisas no cabe ni una unidad; con el suyo, sí.
+    assert len(con_ficha_de_divisas.trades) == 0
+    assert len(con_su_ficha.trades) > 0

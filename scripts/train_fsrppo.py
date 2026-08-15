@@ -27,7 +27,13 @@ from tradingbot.rl.env import EnvParams  # noqa: E402
 from tradingbot.rl.registry import ModelRegistry  # noqa: E402
 from tradingbot.rl.train import buy_and_hold, train  # noqa: E402
 
-DEFAULT_CSV = PROJECT_ROOT / "data" / "history" / "eurusd_h1_20240708_20260708.csv"
+def default_csv() -> Path:
+    history_dir = PROJECT_ROOT / "data" / "history"
+    matches = sorted(history_dir.glob("eurusd_h1_*.csv"))
+    if matches:
+        return matches[-1]
+    return history_dir / "eurusd_h1_20240811_20260811.csv"
+
 CABECERA = f"{'semilla':>8} {'CRR':>9} {'ARR':>9} {'MD':>8} {'Sharpe':>8} {'Calmar':>8} {'Sortino':>8} {'ops':>6}"
 
 
@@ -46,7 +52,7 @@ def fila(nombre: str, metricas, operaciones: int | str = "—") -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--csv", type=Path, default=DEFAULT_CSV)
+    parser.add_argument("--csv", type=Path, default=default_csv())
     parser.add_argument("--timeframe", default="h1")
     parser.add_argument("--instrument", default="EUR/USD")
     parser.add_argument("--train-end", default=None,
@@ -109,8 +115,10 @@ def main() -> int:
         if np.isfinite(s) and s > 0 and c > referencia.metrics.crr
     )
 
+    finite_sharpes = [s for s in sharpes if np.isfinite(s)]
+    sharpe_med_str = f"{float(np.median(finite_sharpes)):.3f}" if finite_sharpes else "—"
     print(f"\nCRR mediano   : {100 * float(np.median(crrs)):.2f}%   (B&H: {100 * referencia.metrics.crr:.2f}%)")
-    print(f"Sharpe mediano: {float(np.nanmedian(sharpes)):.3f}")
+    print(f"Sharpe mediano: {sharpe_med_str}")
     print(f"Semillas con Sharpe > 0 y CRR > B&H: {baten}/{len(resultados)}")
 
     umbral = int(np.ceil(0.7 * len(resultados)))

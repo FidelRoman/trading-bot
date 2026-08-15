@@ -4,6 +4,7 @@
    descubre el backend de la tabla OFFERS; aquí solo se lee y se elige. */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import ConfirmDialog from "./ConfirmDialog";
 import { getJSON, postJSON } from "@/lib/api";
 import { useLive } from "@/lib/live";
 import type { CatalogEntry, CurrentInstrument, InstrumentCatalog } from "@/lib/types";
@@ -28,6 +29,8 @@ export default function InstrumentPicker({ onAction }: { onAction?: (msg: string
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [truncated, setTruncated] = useState(false);
+  const [pendingChange, setPendingChange] = useState<string | null>(null);
+  const [pendingSubscription, setPendingSubscription] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -59,7 +62,9 @@ export default function InstrumentPicker({ onAction }: { onAction?: (msg: string
   // El bot en marcha también lo rechaza, pero eso sí se puede resolver aquí:
   // pausar es reversible de un clic, así que se ofrece en vez de mandar al
   // usuario a otro sitio y dejarle el selector muerto.
-  const needsPause = !blocked && !!status?.running;
+  // Con límite diario `running` se reporta false, pero el motor sigue armado;
+  // solo `paused` confirma que es seguro cambiar de instrumento.
+  const needsPause = !blocked && Boolean(status && !status.paused);
 
   const grouped = useMemo(() => {
     const needle = query.trim().toUpperCase();
@@ -82,17 +87,13 @@ export default function InstrumentPicker({ onAction }: { onAction?: (msg: string
 
   const symbol = current?.symbol ?? status?.instrument ?? "—";
 
-  async function change(next: string) {
+  async function change(next: string, pauseConfirmed = false) {
     if (!next || next === symbol) return;
     const entry = catalog.find((i) => i.symbol === next);
 
-    if (needsPause) {
-      const seguir = confirm(
-        `El bot está en marcha y no se puede cambiar de instrumento operando.\n\n` +
-          `¿Pausarlo y cambiar a ${next}?\n\n` +
-          `Quedará pausado: para que vuelva a operar tendrás que darle a INICIAR.`
-      );
-      if (!seguir) return;
+    if (needsPause && !pauseConfirmed) {
+      setPendingChange(next);
+      return;
     }
 
     setBusy(true);
@@ -112,20 +113,25 @@ export default function InstrumentPicker({ onAction }: { onAction?: (msg: string
       }
       onAction?.(`Instrumento cambiado a ${next}`, true);
       if (entry && !entry.tradable) {
-        // Suscribir modifica la cuenta FXCM de forma permanente: se pregunta.
-        const activar = confirm(
-          `${next} está en estado "${entry.subscription_status}" y no se puede operar.\n\n` +
-            "¿Activarlo ahora? El cambio persiste en tu cuenta FXCM."
-        );
-        if (activar) {
-          const s = await postJSON<{ ok: boolean; error?: string; status?: string }>(
-            "/api/instrument/subscribe",
-            { symbol: next }
-          );
-          onAction?.(s.ok ? `${next} activado (estado ${s.status})` : `Error: ${s.error}`, !!s.ok);
-        }
+        setPendingSubscription(next);
       }
       await Promise.all([load(), refreshStatus()]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function subscribe() {
+    if (!pendingSubscription) return;
+    setBusy(true);
+    try {
+      const s = await postJSON<{ ok: boolean; error?: string; status?: string }>(
+        "/api/instrument/subscribe",
+        { symbol: pendingSubscription }
+      );
+      onAction?.(s.ok ? `${pendingSubscription} activado (estado ${s.status})` : `Error: ${s.error}`, Boolean(s.ok));
+      if (s.ok) setPendingSubscription(null);
+      await load();
     } finally {
       setBusy(false);
     }
@@ -148,7 +154,7 @@ export default function InstrumentPicker({ onAction }: { onAction?: (msg: string
   return (
     <div className="card" style={{ marginBottom: "16px", padding: "16px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-        <span style={{ fontSize: "12px", fontWeight: "bold", color: "var(--text-muted)", letterSpacing: "1px" }}>
+        <span className="card-title">
           INSTRUMENTO
         </span>
         <button className="link-btn" onClick={refreshCatalog} disabled={busy}
@@ -174,6 +180,7 @@ export default function InstrumentPicker({ onAction }: { onAction?: (msg: string
       )}
 
       <input
+        aria-label="Buscar instrumento"
         type="search"
         value={query}
         placeholder="Buscar (EUR, US30, AAPL…)"
@@ -199,6 +206,7 @@ export default function InstrumentPicker({ onAction }: { onAction?: (msg: string
       )}
 
       <select
+        aria-label="Instrumento activo"
         value={symbol}
         disabled={busy || !!blocked}
         onChange={(e) => change(e.target.value)}
@@ -240,6 +248,29 @@ export default function InstrumentPicker({ onAction }: { onAction?: (msg: string
           ? <div>Catálogo: {current.catalog_updated_at.slice(0, 16).replace("T", " ")}</div>
           : <div>Catálogo sin descubrir — pulsa ACTUALIZAR</div>}
       </div>
+      <ConfirmDialog
+        open={pendingChange !== null}
+        title="Pausar y cambiar instrumento"
+        description={<>El bot se pausará antes de cambiar a <strong>{pendingChange}</strong>. Tendrás que iniciarlo de nuevo manualmente.</>}
+        confirmLabel="PAUSAR Y CAMBIAR"
+        busy={busy}
+        onCancel={() => setPendingChange(null)}
+        onConfirm={() => {
+          const next = pendingChange;
+          setPendingChange(null);
+          if (next) void change(next, true);
+        }}
+      />
+      <ConfirmDialog
+        open={pendingSubscription !== null}
+        title="Activar instrumento en FXCM"
+        description={<><strong>{pendingSubscription}</strong> no está habilitado para operar. Activarlo modificará de forma persistente la suscripción de la cuenta FXCM.</>}
+        confirmLabel="ACTIVAR INSTRUMENTO"
+        danger
+        busy={busy}
+        onCancel={() => setPendingSubscription(null)}
+        onConfirm={subscribe}
+      />
     </div>
   );
 }

@@ -17,7 +17,12 @@ bot se quedaba desarmado. Con el mapa, cambiar de símbolo cambia de modelo.
 from __future__ import annotations
 
 import json
+import math
+import os
+import re
 import shutil
+import tempfile
+import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,9 +30,10 @@ from typing import Any
 
 from ..config import PROJECT_ROOT, normalize_symbol
 
-__all__ = ["MODELS_DIR", "ModelRecord", "ModelRegistry"]
+__all__ = ["MODELS_DIR", "ModelRecord", "ModelRegistry", "meets_acceptance"]
 
 MODELS_DIR = PROJECT_ROOT / "data" / "models"
+_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 def _norm(symbol: str) -> str:
@@ -50,21 +56,38 @@ class ModelRecord:
     test_metrics: dict[str, Any]
     benchmark_metrics: dict[str, Any] = field(default_factory=dict)
     feature_scale: float = 1.0
+    data_manifest: dict[str, Any] = field(default_factory=dict)
     notes: str = ""
 
     def as_dict(self) -> dict:
         return asdict(self)
 
 
+def meets_acceptance(record: ModelRecord) -> bool:
+    """Criterio informativo del proyecto; nunca bloquea la activación manual."""
+    sharpe = float(record.test_metrics.get("sharpe", float("nan")))
+    crr = float(record.test_metrics.get("crr", float("nan")))
+    benchmark = float(record.benchmark_metrics.get("crr", float("nan")))
+    return math.isfinite(sharpe) and sharpe > 0 and math.isfinite(crr) and crr > benchmark
+
+
 class ModelRegistry:
     def __init__(self, root: Path | None = None):
         self.root = Path(root) if root else MODELS_DIR
         self.root.mkdir(parents=True, exist_ok=True)
+        self.root = self.root.resolve()
+        self._lock = threading.RLock()
 
     # -- rutas ------------------------------------------------------------
 
     def path_for(self, run_id: str) -> Path:
-        return self.root / run_id
+        value = str(run_id)
+        if not _RUN_ID.fullmatch(value) or value in {".", ".."}:
+            raise ValueError(f"run_id inválido: {run_id!r}")
+        path = (self.root / value).resolve()
+        if path.parent != self.root:
+            raise ValueError(f"run_id fuera del registro: {run_id!r}")
+        return path
 
     @property
     def pointer_path(self) -> Path:
@@ -72,7 +95,26 @@ class ModelRegistry:
 
     @staticmethod
     def new_run_id(prefix: str = "fsrppo") -> str:
-        return f"{prefix}-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}"
+        if not _RUN_ID.fullmatch(prefix):
+            raise ValueError(f"prefijo de run_id inválido: {prefix!r}")
+        return f"{prefix}-{datetime.now(timezone.utc):%Y%m%d-%H%M%S-%f}"
+
+    @staticmethod
+    def _atomic_text(path: Path, value: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(value)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+        except Exception:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+            raise
 
     # -- escritura --------------------------------------------------------
 
@@ -80,24 +122,32 @@ class ModelRegistry:
         import torch
 
         destino = self.path_for(record.run_id)
-        destino.mkdir(parents=True, exist_ok=True)
-        torch.save(state_dict, destino / "model.pt")
-        (destino / "meta.json").write_text(
-            json.dumps(record.as_dict(), indent=2, ensure_ascii=False, default=str)
-        )
+        with self._lock:
+            destino.mkdir(parents=True, exist_ok=True)
+            temporal = destino / ".model.pt.tmp"
+            torch.save(state_dict, temporal)
+            os.replace(temporal, destino / "model.pt")
+            self._atomic_text(
+                destino / "meta.json",
+                json.dumps(record.as_dict(), indent=2, ensure_ascii=False, default=str),
+            )
         return destino
 
     def save_history(self, run_id: str, history: list[dict]) -> None:
         """Curvas de entrenamiento, para pintarlas en la interfaz."""
-        (self.path_for(run_id)).mkdir(parents=True, exist_ok=True)
-        (self.path_for(run_id) / "history.json").write_text(json.dumps(history))
+        with self._lock:
+            path = self.path_for(run_id)
+            path.mkdir(parents=True, exist_ok=True)
+            self._atomic_text(path / "history.json", json.dumps(history))
 
     def delete(self, run_id: str) -> None:
-        mapa = self.active_map()
-        restante = {k: v for k, v in mapa.items() if v != run_id}
-        if restante != mapa:
-            self._write_pointer(restante)
-        shutil.rmtree(self.path_for(run_id), ignore_errors=True)
+        with self._lock:
+            path = self.path_for(run_id)
+            mapa = self.active_map()
+            restante = {k: v for k, v in mapa.items() if v != run_id}
+            if restante != mapa:
+                self._write_pointer(restante)
+            shutil.rmtree(path, ignore_errors=True)
 
     # -- lectura ----------------------------------------------------------
 
@@ -128,15 +178,16 @@ class ModelRegistry:
         pesos = self.path_for(run_id) / "model.pt"
         if not pesos.exists():
             raise FileNotFoundError(f"el modelo {run_id} no tiene pesos guardados")
-        return torch.load(pesos, map_location="cpu", weights_only=False)
+        return torch.load(pesos, map_location="cpu", weights_only=True)
 
     # -- modelo activo ----------------------------------------------------
 
     def _write_pointer(self, mapa: dict[str, str]) -> None:
         """Escribe el mapa, o borra el archivo si queda vacío."""
         if mapa:
-            self.pointer_path.write_text(
-                json.dumps(mapa, indent=2, ensure_ascii=False, sort_keys=True)
+            self._atomic_text(
+                self.pointer_path,
+                json.dumps(mapa, indent=2, ensure_ascii=False, sort_keys=True),
             )
         elif self.pointer_path.exists():
             self.pointer_path.unlink()

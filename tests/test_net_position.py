@@ -101,6 +101,17 @@ def test_posicion_ignora_otros_instrumentos():
     assert broker.position == 3000
 
 
+def test_lecturas_de_posicion_sin_sesion_devuelven_plano():
+    """La UI puede consultar mientras FXCM se desconecta, sin levantar 500."""
+    broker = make_broker([FakeTrade("1", 3000, "long")])
+    broker._fx = None
+
+    assert broker.open_trades() == []
+    assert broker.all_open_trades() == []
+    assert broker.position == 0
+    assert broker.entry_price == 0.0
+
+
 def test_precio_medio_pondera_por_unidades():
     broker = make_broker([
         FakeTrade("1", 1000, "long", open_rate=1.10),

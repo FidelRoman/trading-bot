@@ -169,6 +169,15 @@ def test_offer_to_entry_calcula_spread_y_operabilidad():
     assert entry["tradable"] is True
 
 
+def test_catalogo_conserva_el_multiplicador_de_contrato():
+    offer = FakeOffer("US30")
+    offer.contract_multiplier = 10
+    entry = offer_to_entry(offer, base_unit_size=1)
+
+    assert entry["contract_multiplier"] == 10
+    assert spec_from_entry(entry).contract_multiplier == 10
+
+
 def test_offer_to_entry_marca_no_operable_lo_que_no_este_en_T():
     for estado in ("D", "V"):
         entry = offer_to_entry(FakeOffer("AAPL", subscription_status=estado))

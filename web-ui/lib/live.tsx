@@ -16,6 +16,7 @@ interface LiveState {
   backtestVersion: number;
   logVersion: number;
   wsConnected: boolean;
+  syncError: string | null;
   refreshStatus: () => Promise<void>;
 }
 
@@ -28,6 +29,7 @@ const LiveContext = createContext<LiveState>({
   backtestVersion: 0,
   logVersion: 0,
   wsConnected: false,
+  syncError: null,
   refreshStatus: async () => {},
 });
 
@@ -46,6 +48,7 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
   const [backtestVersion, setBacktestVersion] = useState(0);
   const [logVersion, setLogVersion] = useState(0);
   const [wsConnected, setWsConnected] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   // El backend no emite un evento por vela: se deduce de last_candle, que sí
   // viaja en cada status. Un ref evita reabrir el socket al cambiar de vela.
@@ -62,8 +65,14 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
   }
 
   const refreshStatus = async () => {
-    const next = await getJSON<Status>("/api/status");
-    applyStatus(next);
+    try {
+      const next = await getJSON<Status>("/api/status");
+      applyStatus(next);
+      setSyncError(null);
+    } catch (cause) {
+      setSyncError("No se puede sincronizar con el backend. Se reintentará automáticamente.");
+      throw cause;
+    }
   };
 
   useEffect(() => {
@@ -79,7 +88,7 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
         setPositions(open);
         setFloatingPl(open.reduce((total, position) => total + (position.gross_pl ?? 0), 0));
       } catch {
-        /* backend caído: se reintenta en el siguiente ciclo */
+        setSyncError("No se puede sincronizar con el backend. Se reintentará automáticamente.");
       }
     };
 
@@ -150,6 +159,7 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
         backtestVersion,
         logVersion,
         wsConnected,
+        syncError,
         refreshStatus,
       }}
     >

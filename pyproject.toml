@@ -1,7 +1,7 @@
 [project]
 name = "tradingbot"
 version = "0.2.0"
-description = "Bot de trading EUR/USD — FSRPPO (PPO sobre representación de señal financiera) sobre FXCM (ForexConnect)"
+description = "Bot de trading multi-instrumento — FSRPPO y estrategias de referencia sobre FXCM"
 requires-python = ">=3.10,<3.11"
 dependencies = [
     "forexconnect==1.6.43",

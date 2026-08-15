@@ -54,6 +54,10 @@ export interface Status {
   stats: Stats;
   last_candle: string | null;
   net_position?: number;
+  /** Reloj de decisión: cada cuánto opera y quién lo fija. */
+  timeframe?: string;
+  timeframe_setting?: string;
+  timeframe_source?: "modelo" | "ajuste";
   /** Modelo activo PARA EL INSTRUMENTO ACTUAL; hay uno por símbolo. */
   active_model?: string | null;
   active_model_instrument?: string | null;
@@ -131,6 +135,7 @@ export interface TrainingState {
   test_metrics?: PaperMetrics;
   benchmark_metrics?: PaperMetrics;
   activated?: boolean;
+  meets_acceptance?: boolean;
 }
 
 /** Con qué se entrenó el modelo que está decidiendo ahora mismo. */
@@ -142,6 +147,7 @@ export interface ActiveModelInfo {
   spread_pips?: number | null;
   max_units?: number | null;
   test_metrics?: PaperMetrics | null;
+  meets_acceptance?: boolean;
 }
 
 export interface ModelRecord {
@@ -159,6 +165,8 @@ export interface ModelRecord {
   benchmark_metrics: PaperMetrics;
   feature_scale?: number;
   is_active?: boolean;
+  meets_acceptance?: boolean;
+  data_manifest?: Record<string, unknown>;
 }
 
 export interface InstrumentSpec {
@@ -169,6 +177,7 @@ export interface InstrumentSpec {
   quote_currency: string;
   asset_class?: string;
   digits?: number;
+  contract_multiplier?: number;
 }
 
 /** Entrada del catálogo que el worker descubre de la tabla OFFERS de FXCM. */
@@ -185,6 +194,7 @@ export interface CatalogEntry {
   subscription_status: string;
   tradable: boolean;
   typical_spread_pips?: number;
+  contract_multiplier?: number;
 }
 
 export interface InstrumentCatalog {
@@ -204,6 +214,7 @@ export interface LiveInstrument {
   min_lot: number;
   lot_size: number;
   quote_currency: string;
+  contract_multiplier?: number;
   subscription_status: string;
 }
 
@@ -235,13 +246,15 @@ export interface MarketSelection {
   filename?: string;
   created_at?: string;
   ranking?: MarketRankingRow[];
-  winner?: { symbol: string; timeframe: string };
+  winner?: { symbol: string; timeframe: string } | null;
   test?: {
-    passed: number;
-    required: number;
-    total: number;
-    accepted: boolean;
-    benchmark_metrics: PaperMetrics;
+    status?: string;
+    reason?: string;
+    passed?: number;
+    required?: number;
+    total?: number;
+    accepted?: boolean;
+    benchmark_metrics?: PaperMetrics;
   };
 }
 

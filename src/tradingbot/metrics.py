@@ -98,7 +98,10 @@ def evaluate(
     if 1.0 + crr <= 0:
         arr = -1.0
     else:
-        arr = float((1.0 + crr) ** (bars_per_year / periods) - 1.0)
+        try:
+            arr = float((1.0 + crr) ** (bars_per_year / periods) - 1.0)
+        except OverflowError:
+            arr = float("inf") if crr > 0 else -1.0
 
     returns = np.diff(equity) / equity[:-1]
     returns = returns[np.isfinite(returns)]

@@ -134,11 +134,13 @@ class MockBroker:
     def floating_pl(self) -> float:
         if not self.position:
             return 0.0
-        return (self._price - self.entry_price) * self.position
+        return ((self._price - self.entry_price) * self.position
+                * self.spec.contract_multiplier)
 
     def _floating_pl_trades(self) -> float:
         return sum(
-            (1 if t["side"] == "long" else -1) * (self._price - t["open_rate"]) * t["units"]
+            (1 if t["side"] == "long" else -1) * (self._price - t["open_rate"])
+            * t["units"] * self.spec.contract_multiplier
             for t in self._trades
         )
 
@@ -165,7 +167,9 @@ class MockBroker:
             out = []
             for t in self._trades:
                 d = 1 if t["side"] == "long" else -1
-                out.append({**t, "gross_pl": round(d * (self._price - t["open_rate"]) * t["units"], 2)})
+                out.append({**t, "gross_pl": round(
+                    d * (self._price - t["open_rate"]) * t["units"]
+                    * self.spec.contract_multiplier, 2)})
             
             if self.position:
                 out.append({
@@ -178,6 +182,9 @@ class MockBroker:
                     "open_order_id": "sim-net",
                 })
             return out
+
+    def all_open_trades(self) -> list[dict]:
+        return self.open_trades()
 
     def closed_trade_info(self, trade_id: str) -> Optional[dict]:
         with self._lock:
@@ -244,7 +251,8 @@ class MockBroker:
                 return {"traded_units": 0, "price": price, "cost": 0.0,
                         "position": self.position, "realised": 0.0, "order_ids": []}
 
-            cost = abs(delta) * self.spread_pips * self.spec.pip
+            cost = (abs(delta) * self.spread_pips * self.spec.pip
+                    * self.spec.contract_multiplier)
             realizado = self._realise(target, price)
 
             self._equity += realizado - cost
@@ -274,7 +282,8 @@ class MockBroker:
         if cerradas == 0:
             return 0.0
         direccion = 1 if self.position > 0 else -1
-        return direccion * (price - self.entry_price) * cerradas
+        return (direccion * (price - self.entry_price) * cerradas
+                * self.spec.contract_multiplier)
 
     def _update_entry_price(self, target: int, price: float) -> None:
         if target == 0:
@@ -308,7 +317,11 @@ class MockBroker:
 
     def _settle(self, t: dict, price: float) -> None:
         d = 1 if t["side"] == "long" else -1
-        pl = round(d * (price - t["open_rate"]) * t["units"], 2)
+        pl = round(
+            d * (price - t["open_rate"]) * t["units"]
+            * self.spec.contract_multiplier,
+            2,
+        )
         self._equity += pl
         self._trades.remove(t)
         self._closed.append(

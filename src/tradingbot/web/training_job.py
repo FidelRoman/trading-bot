@@ -7,6 +7,8 @@ así que no puede correr en el bucle de eventos.
 from __future__ import annotations
 
 import logging
+import hashlib
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,6 +40,13 @@ class TrainingJob:
         self._note = ""
         self._progress = 0.0
         self._curve: list[dict] = []
+        previous = self.store.get_state("last_training")
+        if isinstance(previous, dict) and previous.get("status") == "running":
+            self.store.set_state("last_training", {
+                **previous,
+                "status": "interrupted",
+                "error": "El proceso se reinició antes de terminar el trabajo",
+            })
 
     # -- estado ------------------------------------------------------------
 
@@ -68,6 +77,12 @@ class TrainingJob:
                 return False
             self._running, self._kind = True, kind
             self._note, self._progress, self._curve = "Preparando…", 0.0, []
+            self.store.set_state("last_training", {
+                "status": "running",
+                "kind": kind,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "note": self._note,
+            })
             return True
 
     def _release(self, result: dict) -> None:
@@ -87,6 +102,24 @@ class TrainingJob:
             ({"name": p.name, "size": p.stat().st_size} for p in HISTORY_DIR.glob("*.csv")),
             key=lambda d: d["name"],
         )
+
+    @staticmethod
+    def validate_dataset(csv_name: str, instrument: str, timeframe: str) -> Path:
+        """Resuelve un histórico y comprueba su identidad declarada en el nombre."""
+        name = Path(csv_name).name
+        expected_slug = instrument.replace("/", "").lower()
+        pattern = re.compile(
+            rf"^{re.escape(expected_slug)}_{re.escape(timeframe.lower())}_\d{{8}}_\d{{8}}\.csv$"
+        )
+        if not pattern.fullmatch(name.lower()):
+            raise ValueError(
+                f"{name} no corresponde a {instrument} {timeframe.upper()}; "
+                "usa un CSV descargado para ese instrumento y timeframe"
+            )
+        path = HISTORY_DIR / name
+        if not path.exists():
+            raise FileNotFoundError(f"no existe el histórico {csv_name}")
+        return path
 
     def _load_candles(self, csv_name: str | None, timeframe: str) -> pd.DataFrame:
         if csv_name:
@@ -144,8 +177,12 @@ class TrainingJob:
             # Importacion diferida: la imagen de produccion no instala torch ni
             # expone entrenamiento; la API y la inferencia siguen arrancando.
             from ..rl.train import buy_and_hold, train
+            from ..rl.registry import meets_acceptance
 
-            candles = self._load_candles(csv_name, timeframe)
+            if not csv_name:
+                raise ValueError("elige un histórico identificado para entrenar")
+            source_path = self.validate_dataset(csv_name, instrument, timeframe)
+            candles = load_csv(source_path, timeframe=timeframe)
             self._set("Preparando características FSR…", 0.0)
 
             def progreso_fsr(hechas: int, totales: int) -> None:
@@ -169,11 +206,27 @@ class TrainingJob:
                 entrena, evalua,
                 fsr_params=fsr, ppo_params=ppo, env_params=env,
                 timeframe=timeframe, instrument=instrument, on_iteration=por_iteracion,
+                data_manifest={
+                    "filename": source_path.name,
+                    "sha256": hashlib.sha256(source_path.read_bytes()).hexdigest(),
+                    "bars": int(len(candles)),
+                    "first_bar": str(candles.index[0]),
+                    "last_bar": str(candles.index[-1]),
+                    "instrument": instrument,
+                    "timeframe": timeframe,
+                },
             )
 
             registro = ModelRegistry()
+            accepted = meets_acceptance(salida.record)
             if activate:
                 registro.activate(salida.record.run_id)
+                level = "info" if accepted else "warn"
+                self.store.log(
+                    level,
+                    f"Modelo {salida.record.run_id} activado manualmente; "
+                    f"criterio de aceptación={'cumplido' if accepted else 'no cumplido'}",
+                )
 
             referencia = buy_and_hold(evalua, env, timeframe)
             resultado = {
@@ -186,6 +239,7 @@ class TrainingJob:
                 "test_metrics": salida.record.test_metrics,
                 "benchmark_metrics": referencia.metrics.as_dict(),
                 "activated": activate,
+                "meets_acceptance": accepted,
                 "curve": [s.as_dict() for s in salida.history],
             }
         except Exception as exc:

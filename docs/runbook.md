@@ -25,13 +25,14 @@ uv sync
 uv run python -c "import forexconnect; print('forexconnect OK')"
 ```
 
-## 2. Suite de pruebas — ✅ 227 pasan
+## 2. Suite de pruebas
 
 ```bash
 uv run pytest -q
 ```
 
-Esperado: `227 passed`. Cubre, entre otras cosas:
+El número crece con el proyecto; el criterio es que la ejecución termine sin
+fallos. Cubre, entre otras cosas:
 
 - `tests/test_web_auth.py` — 6 pruebas (`async def`) del 503 sin token, 401 con
   token inválido, subprotocolo del WebSocket y mismo origen.
@@ -44,6 +45,7 @@ Esperado: `227 passed`. Cubre, entre otras cosas:
 ## 3. Interfaz — ✅ compila
 
 ```bash
+nvm use
 cd web-ui && npm install && npm run build && cd ..
 ```
 
@@ -154,7 +156,9 @@ caffeinate -s uv run uvicorn tradingbot.web.app:app --port 8000 \
 
 Arranca **pausado** a propósito y el panel enseña la banda roja «ÓRDENES REALES».
 Antes de pulsar INICIAR: revisa `risk_per_trade`, `daily_loss_limit` y
-`max_trades_per_day` en `/settings`, y empieza con el tamaño mínimo.
+`max_trades_per_day` en `/settings`, y empieza con el tamaño mínimo. El backend
+exige confirmar el destino Real, pero no bloquea por rentabilidad: un modelo
+marcado «NO VALIDADO» o cualquiera de las estrategias puede operar si lo decides.
 
 Para volver atrás en cualquier momento: DETENER en el panel, o
 `curl -X POST -H "Authorization: Bearer $TOKEN" localhost:8000/api/control/pause`.
@@ -176,7 +180,7 @@ Orden obligatorio si las lanzas aquí: `download_history` → `precompute_fsr` �
 ## 9. Cordura antes de tocar dinero
 
 ```bash
-# Que no queden referencias a la infraestructura retirada (Firestore/Vercel/Actions)
+# Que no queden referencias a la infraestructura retirada (Firestore/Vercel)
 grep -rn "firestore\|scheduled_tick\|FIRESTORE" --include="*.py" --include="*.ts" \
   --include="*.tsx" --include="*.mjs" . | grep -v node_modules
 #  (vacio = limpio)  ✅ verificado

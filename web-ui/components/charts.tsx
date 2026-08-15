@@ -34,11 +34,15 @@ export function CandleChart({
   candles,
   bands,
   markers,
+  digits = 5,
+  label = "Gráfico de velas",
   tall,
 }: {
   candles: Candle[];
   bands: Band[];
   markers?: SeriesMarker<Time>[];
+  digits?: number;
+  label?: string;
   tall?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -52,7 +56,7 @@ export function CandleChart({
       wickUpColor: "#4ade80",
       wickDownColor: "#f0716a",
       borderVisible: false,
-      priceFormat: { type: "price", precision: 5, minMove: 0.00001 },
+      priceFormat: { type: "price", precision: digits, minMove: 10 ** -digits },
     });
     series.setData(candles as { time: Time; open: number; high: number; low: number; close: number }[]);
     const mkLine = (color: string, style: number) =>
@@ -69,19 +73,26 @@ export function CandleChart({
     mkLine("rgba(240,113,106,0.75)", 0).setData(bands.map((b) => ({ time: b.time as Time, value: b.mid })));
     if (markers?.length) series.setMarkers(markers);
     return () => chart.remove();
-  }, [candles, bands, markers]);
+  }, [candles, bands, markers, digits]);
 
-  return <div ref={ref} className={`chart${tall ? " tall" : ""}`} />;
+  const latest = candles[candles.length - 1];
+  const summary = latest
+    ? `${label}. ${candles.length} velas. Último cierre ${latest.close.toFixed(digits)}, máximo ${latest.high.toFixed(digits)}, mínimo ${latest.low.toFixed(digits)}.`
+    : `${label}. Sin datos disponibles.`;
+
+  return <div ref={ref} className={`chart${tall ? " tall" : ""}`} role="img" aria-label={summary} />;
 }
 
 export function AreaChart({
   data,
   color = "#9aa8f8",
   fit,
+  label = "Gráfico de evolución",
 }: {
   data: { time: number; value: number }[];
   color?: string;
   fit?: boolean;
+  label?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -100,5 +111,9 @@ export function AreaChart({
     return () => chart.remove();
   }, [data, color, fit]);
 
-  return <div ref={ref} className="chart" />;
+  const values = data.map((point) => point.value);
+  const summary = values.length
+    ? `${label}. ${values.length} puntos. Último valor ${values[values.length - 1].toFixed(2)}, mínimo ${Math.min(...values).toFixed(2)}, máximo ${Math.max(...values).toFixed(2)}.`
+    : `${label}. Sin datos disponibles.`;
+  return <div ref={ref} className="chart" role="img" aria-label={summary} />;
 }

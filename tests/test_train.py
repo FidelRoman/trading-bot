@@ -118,6 +118,21 @@ def test_el_tramo_de_test_no_influye_en_la_seleccion():
     ] == [("EUR/USD", "h4"), ("XAU/USD", "d1")]
 
 
+def test_no_hay_ganador_si_sharpe_no_es_positivo():
+    from tradingbot.rl.selection import winner_key
+
+    ranking = rank_markets([{
+        "symbol": "EUR/USD",
+        "timeframe": "h4",
+        "validation": {"median_sharpe": -0.1, "median_crr": 0.08, "benchmark_crr": 0.02},
+    }])
+
+    assert ranking[0]["eligible"] is False
+    assert ranking[0]["winner"] is False
+    with pytest.raises(ValueError, match="ningún candidato"):
+        winner_key(ranking)
+
+
 # -- replay y referencia ---------------------------------------------------
 
 

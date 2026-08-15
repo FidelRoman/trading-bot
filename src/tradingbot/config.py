@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import os
+import re
+import tempfile
+import threading
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -9,6 +12,9 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
+
+_ENV_WRITE_LOCK = threading.Lock()
+_SAFE_ENV_VALUE = re.compile(r"^[A-Za-z0-9_./:@%+,-]*$")
 
 INSTRUMENT = "EUR/USD"
 TIMEFRAME = "h1"
@@ -49,8 +55,8 @@ class InstrumentSpec:
 
 
 # Semilla de especificaciones conocidas. NO es una lista blanca: el universo real
-# lo descubre el worker de la tabla OFFERS de FXCM (ver tradingbot.instruments) y
-# se publica en el documento de estado ``instrument_catalog``. Estas entradas son
+# lo descubre el backend de la tabla OFFERS de FXCM (ver tradingbot.instruments) y
+# se guarda en el estado local ``instrument_catalog``. Estas entradas son
 # el respaldo para trabajar sin catálogo (tests, backtests, primer despliegue).
 INSTRUMENT_SEEDS: dict[str, InstrumentSpec] = {
     "EUR/USD": InstrumentSpec("EUR/USD", pip=0.0001, min_lot=1_000,
@@ -251,7 +257,7 @@ class FxcmCredentials:
     user: str = field(default_factory=_fxcm_user)
     password: str = field(default_factory=_fxcm_pass)
     connection: str = field(default_factory=lambda: os.getenv("FXCM_CONNECTION", "Demo"))
-    url: str = field(default_factory=lambda: os.getenv("FXCM_URL", "http://www.fxcorporate.com/Hosts.jsp"))
+    url: str = field(default_factory=lambda: os.getenv("FXCM_URL", "https://www.fxcorporate.com/Hosts.jsp"))
 
     def validate(self) -> None:
         if not self.user or not self.password:
@@ -261,15 +267,20 @@ class FxcmCredentials:
             )
 
 
-def _db_path() -> Path:
+def db_path_for_connection(connection: str, mock: bool | None = None) -> Path:
     """DB separada por modo: los datos simulados no deben mezclarse con los
     de la cuenta FXCM (contaminan equity diario, historial y métricas)."""
-    if os.getenv("MOCK") == "1":
+    simulated = os.getenv("MOCK") == "1" if mock is None else mock
+    if simulated:
         name = "tradingbot-sim.db"
     else:
-        conn = os.getenv("FXCM_CONNECTION", "Demo").lower()
+        conn = str(connection or "Demo").lower()
         name = f"tradingbot-{conn}.db"
     return PROJECT_ROOT / "data" / name
+
+
+def _db_path() -> Path:
+    return db_path_for_connection(os.getenv("FXCM_CONNECTION", "Demo"))
 
 
 @dataclass(frozen=True)
@@ -285,19 +296,51 @@ def load_settings() -> Settings:
 
 
 def update_env_file(values: dict[str, str], path: Path | None = None) -> None:
-    """Actualiza (o crea) claves en el .env preservando el resto de líneas."""
+    """Actualiza claves en ``.env`` mediante reemplazo atómico y modo privado.
+
+    Las credenciales pueden contener espacios o ``#``. Se citan esos valores para
+    que python-dotenv los recupere sin alterarlos y se rechazan saltos de línea,
+    que de otro modo permitirían inyectar claves adicionales.
+    """
     env_path = path or (PROJECT_ROOT / ".env")
-    lines: list[str] = []
-    if env_path.exists():
-        lines = env_path.read_text().splitlines()
-    remaining = dict(values)
-    out: list[str] = []
-    for line in lines:
-        key = line.split("=", 1)[0].strip() if "=" in line and not line.lstrip().startswith("#") else None
-        if key in remaining:
-            out.append(f"{key}={remaining.pop(key)}")
-        else:
-            out.append(line)
-    for key, value in remaining.items():
-        out.append(f"{key}={value}")
-    env_path.write_text("\n".join(out) + "\n")
+
+    def literal(value: str) -> str:
+        text = str(value)
+        if "\n" in text or "\r" in text:
+            raise ValueError("los valores de entorno no pueden contener saltos de línea")
+        if _SAFE_ENV_VALUE.fullmatch(text):
+            return text
+        return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+    with _ENV_WRITE_LOCK:
+        lines = env_path.read_text().splitlines() if env_path.exists() else []
+        remaining = {str(key): str(value) for key, value in values.items()}
+        out: list[str] = []
+        for line in lines:
+            key = (
+                line.split("=", 1)[0].strip()
+                if "=" in line and not line.lstrip().startswith("#")
+                else None
+            )
+            if key in remaining:
+                out.append(f"{key}={literal(remaining.pop(key))}")
+            else:
+                out.append(line)
+        for key, value in remaining.items():
+            out.append(f"{key}={literal(value)}")
+
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix=f".{env_path.name}.", dir=env_path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write("\n".join(out) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, env_path)
+        except Exception:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+            raise

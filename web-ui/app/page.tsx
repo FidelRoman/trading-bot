@@ -14,10 +14,10 @@ import { fmt, fmtPx, sign } from "@/lib/format";
 import { useLive } from "@/lib/live";
 import type { Band, Candle, Trade } from "@/lib/types";
 
-const TFS = ["m5", "m15", "h1", "h4"] as const;
+const TFS = ["m5", "m15", "h1", "h4", "d1"] as const;
 
 export default function Dashboard() {
-  const { status, prices, floatingPl, candleVersion, wsConnected } = useLive();
+  const { status, prices, floatingPl, candleVersion, wsConnected, refreshStatus } = useLive();
   // Decimales e instrumento vienen del status: la UI ya no asume EUR/USD.
   const digits = status?.digits ?? 5;
   const symbol = status?.instrument ?? "—";
@@ -26,21 +26,34 @@ export default function Dashboard() {
   const [bands, setBands] = useState<Band[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [panelMsg, setPanelMsg] = useState("");
+  const [dataError, setDataError] = useState("");
+  const [strategyBusy, setStrategyBusy] = useState(false);
 
   const activeStrategy = status?.active_strategy || "bollinger";
 
   async function handleStrategyChange(strategyKey: string) {
-    await postJSON("/api/settings", { active_strategy: strategyKey });
+    setStrategyBusy(true);
+    setPanelMsg("");
+    try {
+      const result = await postJSON<{ ok: boolean; error?: string }>("/api/settings", { active_strategy: strategyKey });
+      if (result.ok) await refreshStatus();
+      setPanelMsg(result.ok ? "Estrategia actualizada." : `Error: ${result.error ?? "no se pudo actualizar"}`);
+    } catch {
+      setPanelMsg("Error: no se pudo actualizar la estrategia.");
+    } finally {
+      setStrategyBusy(false);
+    }
   }
 
   useEffect(() => {
     let alive = true;
+    setDataError("");
     getJSON<{ candles: Candle[]; bands: Band[] }>(`/api/candles?count=200&tf=${tf}`)
       .then((d) => { if (alive) { setCandles(d.candles); setBands(d.bands); } })
-      .catch(() => {});
+      .catch(() => alive && setDataError("No se pudo cargar el gráfico. Comprueba la conexión e inténtalo de nuevo."));
     getJSON<Trade[]>("/api/trades?limit=100")
       .then((t) => alive && setTrades(t))
-      .catch(() => {});
+      .catch(() => alive && setDataError("No se pudieron cargar todos los datos de operación."));
     return () => { alive = false; };
   }, [tf, candleVersion, activeStrategy]);
 
@@ -76,6 +89,9 @@ export default function Dashboard() {
                 <button
                   key={t}
                   className={`tf-btn${tf === t ? " active" : ""}`}
+                  type="button"
+                  aria-pressed={tf === t}
+                  aria-label={`Mostrar velas de ${t.toUpperCase()}`}
                   onClick={() => setTf(t)}
                 >
                   {t.toUpperCase()}
@@ -83,7 +99,8 @@ export default function Dashboard() {
               ))}
             </div>
           </div>
-          <CandleChart candles={candles} bands={bands} markers={markers} tall />
+          {dataError && <div className="inline-alert" role="alert">{dataError}</div>}
+          <CandleChart candles={candles} bands={bands} markers={markers} digits={digits} label={`Gráfico de velas de ${symbol} en ${tf.toUpperCase()}`} tall />
           <div className="chart-foot">
             <span>BID <b>{fmtPx(prices?.bid, digits)}</b></span>
             <span>ASK <b>{fmtPx(prices?.ask, digits)}</b></span>
@@ -101,11 +118,11 @@ export default function Dashboard() {
         <InstrumentPicker onAction={(m) => setPanelMsg(m)} />
         <div className="card" style={{ marginBottom: "16px", padding: "16px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: "12px", fontWeight: "bold", color: "var(--text-muted)", letterSpacing: "1px" }}>
-              ESTRATEGIA ACTIVA
-            </span>
+            <label className="field-label" htmlFor="active-strategy">ESTRATEGIA ACTIVA</label>
             <select
+              id="active-strategy"
               value={activeStrategy}
+              disabled={strategyBusy}
               onChange={(e) => handleStrategyChange(e.target.value)}
               style={{
                 background: "var(--card2)",
@@ -131,8 +148,8 @@ export default function Dashboard() {
         <PositionsPanel onAction={(m) => setPanelMsg(m)} />
         <div className="card">
           <div className="card-head">
-            <div className="card-title">▤ SYSTEM LOGS</div>
-            <span className="hint">{panelMsg}</span>
+            <div className="card-title">REGISTRO DEL SISTEMA</div>
+            <span className="hint" role="status" aria-live="polite">{panelMsg}</span>
           </div>
           <LogsPanel />
         </div>

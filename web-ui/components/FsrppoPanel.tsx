@@ -73,6 +73,15 @@ export default function FsrppoPanel() {
         </div>
       )}
 
+      {modelo && (
+        <div className="hint" style={{ padding: "8px 12px" }}>
+          Decide al cierre de cada vela <strong>{status?.timeframe?.toUpperCase()}</strong>
+          {status?.timeframe_source === "modelo"
+            ? " — lo marca el modelo, no los ajustes."
+            : " — según los ajustes."}
+        </div>
+      )}
+
       {modelo && info && (
         <div className="hint" style={{ padding: "8px 12px" }}>
           Entrenado en <strong>{status?.active_model_instrument}</strong>{" "}
@@ -83,6 +92,13 @@ export default function FsrppoPanel() {
           {info.spread_pips != null && <> · spread asumido {info.spread_pips} pips</>}
           {info.max_units != null && <> · exposición máx. {fmt(info.max_units, 0)}</>}
           {" "}<Link href="/models" className="linkish">Ver parámetros</Link>
+        </div>
+      )}
+
+      {modelo && info?.meets_acceptance === false && (
+        <div className="picker-warn" role="status">
+          MODELO NO VALIDADO: permanece operativo por decisión del operador. Sus
+          métricas no cumplen Sharpe &gt; 0 y CRR &gt; Buy &amp; Hold.
         </div>
       )}
 

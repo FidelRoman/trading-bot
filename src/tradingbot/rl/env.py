@@ -119,7 +119,10 @@ def build_observation(
     if not params.include_account_features:
         return signal
 
-    unrealised = position * (price - entry_price) if position else 0.0
+    unrealised = (
+        position * (price - entry_price) * params.instrument.contract_multiplier
+        if position else 0.0
+    )
     account = np.array(
         [
             position / params.max_units,
@@ -158,9 +161,9 @@ def units_for_notional(amount_usd: float, price: float, params: EnvParams) -> in
     """Convierte exposición en USD a unidades base y respeta el lote mínimo."""
     base_currency = params.instrument.symbol.split("/", 1)[0]
     if params.instrument.quote_currency == "USD":
-        raw_units = amount_usd / price
+        raw_units = amount_usd / (price * params.instrument.contract_multiplier)
     elif base_currency == "USD":
-        raw_units = amount_usd
+        raw_units = amount_usd / params.instrument.contract_multiplier
     else:
         raise ValueError(
             f"{params.instrument.symbol} requiere un tipo de conversión a USD"
@@ -171,7 +174,12 @@ def units_for_notional(amount_usd: float, price: float, params: EnvParams) -> in
 
 def transaction_cost(traded_units: int, params: EnvParams) -> float:
     """Coste monetario del spread con el pip propio del instrumento."""
-    return abs(traded_units) * params.effective_spread_pips * params.instrument.pip
+    return (
+        abs(traded_units)
+        * params.effective_spread_pips
+        * params.instrument.pip
+        * params.instrument.contract_multiplier
+    )
 
 
 @dataclass(frozen=True)
@@ -280,7 +288,10 @@ class FxTradingEnv:
         # Ecuación (11): el P&L lo genera toda la posición que se mantiene
         # durante la barra siguiente, y el coste solo lo pagan las unidades
         # que han cambiado de manos.
-        reward = (next_price - price) * self.position - cost
+        reward = (
+            (next_price - price) * self.position * p.instrument.contract_multiplier
+            - cost
+        )
         self.equity += reward
 
         self.index += 1

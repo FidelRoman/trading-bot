@@ -275,8 +275,8 @@ export default function StrategiesPage() {
         <h4 style={{ fontSize: "12px", fontWeight: "bold", color: "var(--text-muted)", letterSpacing: "1px" }}>
           ≋ AJUSTES DE SIMULACIÓN (BACKTESTING)
         </h4>
-        <div className="form-grid" style={{ gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-          <label style={{ gridColumn: "span 2" }}>
+        <div className="form-grid responsive-two-col">
+          <label className="span-two">
             FUENTE DE DATOS
             <select 
               value={s.source} 
@@ -327,7 +327,7 @@ export default function StrategiesPage() {
             />
           </label>
           {s.source === "csv" && (
-            <label style={{ gridColumn: "span 2" }}>
+            <label className="span-two">
               CSV FILE
               <input
                 type="file"
@@ -438,7 +438,8 @@ export default function StrategiesPage() {
           <button
             className="link-btn"
             onClick={() => setShowTrades(prev => ({ ...prev, [stratKey]: !prev[stratKey] }))}
-            style={{ fontSize: "12px", color: "var(--primary)", fontWeight: "600", padding: 0 }}
+            style={{ fontSize: "12px", color: "var(--primary)", fontWeight: "600" }}
+            aria-expanded={Boolean(showTrades[stratKey])}
           >
             {showTrades[stratKey] ? "▲ Ocultar Trades de la Simulación" : "▼ Mostrar Trades de la Simulación"}
           </button>
@@ -526,9 +527,12 @@ export default function StrategiesPage() {
           
           {/* BOLLINGER STRATEGY CARD */}
           <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-            <div 
+            <button
+              type="button"
               className="accordion-header" 
               onClick={() => toggleExpand("bollinger")}
+              aria-expanded={expanded === "bollinger"}
+              aria-controls="bollinger-panel"
               style={{ background: "var(--card)", padding: "20px 24px" }}
             >
               <div className="strategy-title-row">
@@ -536,17 +540,17 @@ export default function StrategiesPage() {
                 {activeStrategy === "bollinger" && <span className="chip ok ml">ACTIVA</span>}
               </div>
               <span className="arrow" style={{ fontSize: "14px" }}>{expanded === "bollinger" ? "▲" : "▼"}</span>
-            </div>
+            </button>
             
             {expanded === "bollinger" && (
-              <div className="accordion-content" style={{ padding: "24px", background: "var(--card)" }}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: "24px" }}>
+              <div id="bollinger-panel" className="accordion-content" style={{ padding: "24px", background: "var(--card)" }}>
+                <div className="strategy-split-grid">
                   {/* Izquierda: Ajustes */}
                   <div>
                     <h4 style={{ fontSize: "12px", fontWeight: "bold", color: "var(--text-muted)", letterSpacing: "1px", marginBottom: "12px" }}>
                       ⚙ AJUSTES DE LA ESTRATEGIA
                     </h4>
-                    <div className="form-grid" style={{ gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                    <div className="form-grid responsive-two-col">
                       {selectTimeframe}
                       <label>
                         PERÍODO BOLLINGER
@@ -619,9 +623,12 @@ export default function StrategiesPage() {
 
           {/* RSI STRATEGY CARD */}
           <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-            <div 
+            <button
+              type="button"
               className="accordion-header" 
               onClick={() => toggleExpand("rsi")}
+              aria-expanded={expanded === "rsi"}
+              aria-controls="rsi-panel"
               style={{ background: "var(--card)", padding: "20px 24px" }}
             >
               <div className="strategy-title-row">
@@ -629,17 +636,17 @@ export default function StrategiesPage() {
                 {activeStrategy === "rsi" && <span className="chip ok ml">ACTIVA</span>}
               </div>
               <span className="arrow" style={{ fontSize: "14px" }}>{expanded === "rsi" ? "▲" : "▼"}</span>
-            </div>
+            </button>
             
             {expanded === "rsi" && (
-              <div className="accordion-content" style={{ padding: "24px", background: "var(--card)" }}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: "24px" }}>
+              <div id="rsi-panel" className="accordion-content" style={{ padding: "24px", background: "var(--card)" }}>
+                <div className="strategy-split-grid">
                   {/* Izquierda: Ajustes */}
                   <div>
                     <h4 style={{ fontSize: "12px", fontWeight: "bold", color: "var(--text-muted)", letterSpacing: "1px", marginBottom: "12px" }}>
                       ⚙ AJUSTES DE LA ESTRATEGIA
                     </h4>
-                    <div className="form-grid" style={{ gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                    <div className="form-grid responsive-two-col">
                       {selectTimeframe}
                       <label>
                         PERÍODO RSI
@@ -711,9 +718,12 @@ export default function StrategiesPage() {
 
           {/* WYCKOFF STRATEGY CARD */}
           <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-            <div 
+            <button
+              type="button"
               className="accordion-header" 
               onClick={() => toggleExpand("wyckoff_1")}
+              aria-expanded={expanded === "wyckoff_1"}
+              aria-controls="wyckoff-panel"
               style={{ background: "var(--card)", padding: "20px 24px" }}
             >
               <div className="strategy-title-row">
@@ -721,17 +731,17 @@ export default function StrategiesPage() {
                 {activeStrategy === "wyckoff_1" && <span className="chip ok ml">ACTIVA</span>}
               </div>
               <span className="arrow" style={{ fontSize: "14px" }}>{expanded === "wyckoff_1" ? "▲" : "▼"}</span>
-            </div>
+            </button>
             
             {expanded === "wyckoff_1" && (
-              <div className="accordion-content" style={{ padding: "24px", background: "var(--card)" }}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: "24px" }}>
+              <div id="wyckoff-panel" className="accordion-content" style={{ padding: "24px", background: "var(--card)" }}>
+                <div className="strategy-split-grid">
                   {/* Izquierda: Ajustes */}
                   <div>
                     <h4 style={{ fontSize: "12px", fontWeight: "bold", color: "var(--text-muted)", letterSpacing: "1px", marginBottom: "12px" }}>
                       ⚙ AJUSTES DE LA ESTRATEGIA
                     </h4>
-                    <div className="form-grid" style={{ gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                    <div className="form-grid responsive-two-col">
                       {selectTimeframe}
                       <label>
                         PERÍODO RANGO

@@ -40,7 +40,7 @@ def credentials(connection):
         user=user,
         password=password,
         connection=connection,
-        url=os.getenv("FXCM_URL", "http://www.fxcorporate.com/Hosts.jsp"),
+        url=os.getenv("FXCM_URL", "https://www.fxcorporate.com/Hosts.jsp"),
     )
     creds.validate()
     return creds

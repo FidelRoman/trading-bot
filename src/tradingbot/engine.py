@@ -1,4 +1,4 @@
-"""Motor del bot: evalúa la estrategia al cierre de cada vela de 15 minutos.
+"""Motor del bot: evalúa la estrategia al cierre del timeframe efectivo.
 
 Corre como tarea asyncio; las llamadas al bróker (bloqueantes) van por
 asyncio.to_thread. El estado running/paused se persiste en SQLite para
@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 from functools import partial
 import logging
+import math
+import os
 import time as _time
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable, Optional
@@ -20,7 +22,7 @@ from .strategy import entry_allowed, latest_signal, size_position, spread_ok
 # Rangos permitidos para ajustes desde la interfaz: clave -> (min, max, tipo) o (opciones, tipo)
 SETTING_BOUNDS = {
     "active_strategy": (["fsrppo", "bollinger", "rsi", "wyckoff_1"], str),
-    "timeframe": (["m5", "m15", "m30", "h1", "h4"], str),
+    "timeframe": (["m5", "m15", "m30", "h1", "h4", "d1"], str),
     "bb_period": (10, 50, int),
     "bb_std": (1.0, 3.0, float),
     "atr_period": (5, 50, int),
@@ -48,10 +50,27 @@ TF_SECONDS = {
     "m30": 30 * 60,
     "h1": 60 * 60,
     "h4": 4 * 60 * 60,
+    "d1": 24 * 60 * 60,
 }
 
 GRACE_SECONDS = 10          # margen tras el cierre de vela antes de pedir histórico
 FAST_TICK_SECONDS = 5       # cadencia de vigilancia de posición/equity
+POLL_SECONDS = 30           # mínimo entre dos consultas de velas al bróker
+
+
+def tf_seconds(timeframe: str) -> int:
+    """Segundos por vela; falla si no se reconoce el timeframe.
+
+    Devolver un valor por defecto sería mucho peor que fallar: con un ``d1`` sin
+    reconocer, el bot latiría cada 15 minutos creyéndose diario. Mismo criterio
+    que ``metrics.bars_per_year``.
+    """
+    try:
+        return TF_SECONDS[str(timeframe).lower()]
+    except KeyError:
+        raise ValueError(
+            f"timeframe desconocido: {timeframe!r} (conocidos: {', '.join(TF_SECONDS)})"
+        ) from None
 
 
 async def _to_thread(function, *args):
@@ -61,8 +80,18 @@ async def _to_thread(function, *args):
 
 
 def last_closed_boundary(now: datetime, timeframe: str = "m15") -> datetime:
-    """Apertura de la última vela ya CERRADA."""
-    seconds = TF_SECONDS.get(timeframe.lower(), 15 * 60)
+    """Apertura de la última vela ya CERRADA, calculada por aritmética.
+
+    **Es una estimación, no la verdad.** Asume que las velas caen en múltiplos
+    exactos desde la época, y FXCM no las pone ahí: sus H4 abren a 01:00/05:00/09:00
+    UTC y sus diarias a las 21:00, no a medianoche. La frontera buena sale de las
+    marcas de tiempo que devuelve el bróker (ver ``BotEngine._due_boundary``).
+
+    Se conserva para el arranque en frío de ``run_once`` —donde hace falta una
+    frontera antes de haber pedido ninguna vela— y como respaldo si el bróker no
+    devuelve histórico.
+    """
+    seconds = tf_seconds(timeframe)
     epoch = int(now.timestamp())
     current_open = epoch - (epoch % seconds)
     return datetime.fromtimestamp(current_open - seconds, tz=timezone.utc)
@@ -75,6 +104,9 @@ class BotEngine:
         self.s = settings
         self._stop = False
         self._last_processed: Optional[datetime] = None
+        # Última vez que se le pidieron velas al bróker, para no consultarlo en
+        # cada vuelta de 5 s mientras se espera al cierre de la vela.
+        self._last_poll: Optional[datetime] = None
         self._last_equity_snap = 0.0
         self._policy = None
         # Clave de la política cacheada: (símbolo, run_id). El símbolo entra en la
@@ -86,6 +118,13 @@ class BotEngine:
         self._policy_instrument: Optional[str] = None
         self._run_once_lock = asyncio.Lock()
         self.on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None
+        # Sin esto, un reinicio volvería a decidir sobre la vela ya procesada.
+        guardada = self.store.get_state("last_processed_boundary")
+        if guardada:
+            try:
+                self._last_processed = datetime.fromisoformat(guardada)
+            except (TypeError, ValueError):
+                pass
         if self.store.get_state("running") is None:
             self.store.set_state("running", True)
 
@@ -225,6 +264,14 @@ class BotEngine:
         """
         if side not in ("long", "short"):
             return {"ok": False, "error": "Dirección inválida"}
+        max_lots = float(os.getenv("MAX_MANUAL_LOTS", "100"))
+        if not math.isfinite(lots) or lots <= 0 or lots > max_lots:
+            return {
+                "ok": False,
+                "error": f"El tamaño debe ser mayor que 0 y no superar {max_lots:g} lotes",
+            }
+        if not math.isfinite(sl_pips) or not math.isfinite(tp_pips):
+            return {"ok": False, "error": "SL y TP deben ser números finitos"}
         if self.store.current_open_trade() is not None:
             return {"ok": False, "error": "Ya hay una posición del bot abierta"}
         if sl_pips < 0 or tp_pips < 0:
@@ -256,23 +303,68 @@ class BotEngine:
 
     # -- loop -----------------------------------------------------------
 
+    def _closed_candles(self, timeframe: str, now: datetime):
+        """Velas del bróker, quedándose solo con las que ya han CERRADO.
+
+        Un bróker sin histórico (dobles de test, adaptadores parciales) devuelve
+        ``None`` en vez de reventar: quien llama ya sabe caer en la estimación.
+        """
+        traer = getattr(self.broker, "get_candles", None)
+        if traer is None:
+            return None
+        candles = traer(count=250, timeframe=timeframe)
+        if candles is None or candles.empty:
+            return candles
+        seconds = tf_seconds(timeframe)
+        return candles[[ts + timedelta(seconds=seconds) <= now for ts in candles.index]]
+
+    def _due_boundary(self, now: datetime):
+        """``(frontera, velas)`` de la última vela cerrada sin procesar.
+
+        La frontera se toma de la **marca de tiempo que devuelve FXCM**, no de
+        ``epoch % segundos``: las velas de FXCM no caen en múltiplos exactos desde
+        la época (H4 abre a 01:00/05:00/09:00 UTC, D1 a las 21:00), así que
+        calcularla daba fronteras inexistentes y decisiones con horas de retraso.
+
+        Devuelve las velas junto a la frontera para que ``_candle_tick`` no tenga
+        que volver a pedirlas.
+        """
+        tf = self.effective_timeframe()
+        seconds = tf_seconds(tf)
+        ultima = self._last_processed
+
+        # Dos puertas antes de tocar la red. La primera: hasta que no cierre la
+        # vela siguiente a la ya procesada no puede haber nada nuevo. La segunda:
+        # una vez en ventana, se pregunta como mucho cada POLL_SECONDS.
+        if ultima is not None and (now - ultima).total_seconds() < 2 * seconds + GRACE_SECONDS:
+            return None, None
+        if self._last_poll is not None and (now - self._last_poll).total_seconds() < POLL_SECONDS:
+            return None, None
+        self._last_poll = now
+
+        candles = self._closed_candles(tf, now)
+        if candles is None or candles.empty:
+            return None, None
+        boundary = candles.index[-1].to_pydatetime()
+        if ultima is not None and boundary <= ultima:
+            return None, None
+        return boundary, candles
+
     async def run(self) -> None:
         self.store.log("info", "Engine iniciado")
         while not self._stop:
             try:
                 await _to_thread(self._ensure_connected)
-                await _to_thread(self._watch_position)
-                self._maybe_snapshot_equity()
-                now = datetime.now(timezone.utc)
-                sp = self.strategy_params()
-                tf = sp.timeframe
-                seconds = TF_SECONDS.get(tf.lower(), 15 * 60)
-                boundary = last_closed_boundary(now, tf)
-                due = (now - boundary).total_seconds() >= seconds + GRACE_SECONDS
-                if due and self._last_processed != boundary:
-                    await _to_thread(self._candle_tick, boundary)
-                    self._last_processed = boundary
-                    await self._emit("candle", {"boundary": boundary.isoformat()})
+                if self.broker.connected:
+                    await _to_thread(self._watch_position)
+                    self._maybe_snapshot_equity()
+                    now = datetime.now(timezone.utc)
+                    boundary, candles = await _to_thread(self._due_boundary, now)
+                    if boundary is not None:
+                        await _to_thread(self._candle_tick, boundary, candles)
+                        self._last_processed = boundary
+                        self.store.set_state("last_processed_boundary", boundary.isoformat())
+                        await self._emit("candle", {"boundary": boundary.isoformat()})
             except Exception:
                 log.exception("Error en el loop del engine")
                 self.store.log("error", "Loop: error transitorio (ver consola)")
@@ -287,16 +379,23 @@ class BotEngine:
         """
         async with self._run_once_lock:
             moment = now or datetime.now(timezone.utc)
-            sp = self.strategy_params()
-            boundary = last_closed_boundary(moment, sp.timeframe)
+            await _to_thread(self._ensure_connected)
+            await _to_thread(self._watch_position)
+            await _to_thread(self._maybe_snapshot_equity)
+
+            tf = self.effective_timeframe()
+            candles = await _to_thread(self._closed_candles, tf, moment)
+            if candles is None or candles.empty:
+                # Sin histórico se cae a la estimación aritmética antes que no hacer nada.
+                boundary = last_closed_boundary(moment, tf)
+            else:
+                boundary = candles.index[-1].to_pydatetime()
+
             persisted = self.store.get_state("last_processed_boundary")
             if persisted == boundary.isoformat():
                 return {"processed": False, "reason": "already_processed", "boundary": persisted}
 
-            await _to_thread(self._ensure_connected)
-            await _to_thread(self._watch_position)
-            await _to_thread(self._maybe_snapshot_equity)
-            await _to_thread(self._candle_tick, boundary)
+            await _to_thread(self._candle_tick, boundary, candles)
             value = boundary.isoformat()
             self._last_processed = boundary
             self.store.set_state("last_processed_boundary", value)
@@ -312,7 +411,13 @@ class BotEngine:
 
     def _ensure_connected(self) -> None:
         if not self.broker.connected:
-            self.broker.connect()
+            try:
+                self.broker.connect()
+            except Exception as exc:
+                if _time.monotonic() - getattr(self, "_last_connect_log", 0) > 30:
+                    self._last_connect_log = _time.monotonic()
+                    log.warning("No se pudo conectar al bróker: %s", exc)
+                    self.store.log("warn", f"Conexión no disponible: {exc}")
 
     def _maybe_snapshot_equity(self) -> None:
         if _time.monotonic() - self._last_equity_snap < 60:
@@ -372,15 +477,19 @@ class BotEngine:
 
     # -- decisión por vela -------------------------------------------------
 
-    def _candle_tick(self, boundary: datetime) -> None:
+    def _candle_tick(self, boundary: datetime, candles=None) -> None:
+        """Decide sobre la vela ``boundary``.
+
+        ``candles`` llega ya filtrado desde ``_due_boundary`` para no pedirle al
+        bróker el mismo histórico dos veces; sin él (``run_once``, tests) se piden.
+        """
         sp, rp = self.strategy_params(), self.risk_params()
-        candles = self.broker.get_candles(count=250, timeframe=sp.timeframe)
-        if candles.empty:
+        now = datetime.now(timezone.utc)
+        if candles is None:
+            candles = self._closed_candles(self.effective_timeframe(), now)
+        if candles is None or candles.empty:
             self.store.log("warn", "Sin velas del bróker")
             return
-        now = datetime.now(timezone.utc)
-        seconds = TF_SECONDS.get(sp.timeframe.lower(), 15 * 60)
-        candles = candles[[ts + timedelta(seconds=seconds) <= now for ts in candles.index]]
 
         if sp.active_strategy == "fsrppo":
             self._fsrppo_tick(candles, rp, now)
@@ -450,6 +559,35 @@ class BotEngine:
         )
 
     # -- decisión por vela: FSRPPO -----------------------------------------
+
+    def effective_timeframe(self) -> str:
+        """Timeframe con el que opera de verdad el bot.
+
+        Con FSRPPO lo manda el **modelo activo**, no el ajuste: sus pesos, su
+        ventana FSR y sus costes se ajustaron sobre velas de un tamaño concreto, y
+        darle velas de otro sería el mismo desajuste silencioso que operar un
+        instrumento con la política de otro. Las estrategias por regla no tienen
+        modelo, así que ahí sigue mandando el ajuste.
+        """
+        sp = self.strategy_params()
+        if sp.active_strategy != "fsrppo":
+            return sp.timeframe
+        entrenado = self._active_model_record()
+        propio = getattr(entrenado, "timeframe", None)
+        if propio and str(propio).lower() in TF_SECONDS:
+            return str(propio).lower()
+        return sp.timeframe
+
+    def _active_model_record(self):
+        """Ficha del modelo activo para el instrumento actual, o ``None``."""
+        from .rl.registry import ModelRegistry
+
+        try:
+            registry = ModelRegistry()
+            run_id = registry.active_id(self.symbol())
+            return registry.get(run_id) if run_id else None
+        except Exception:
+            return None
 
     def active_model_id(self) -> Optional[str]:
         """``run_id`` activo para el instrumento que opera el bróker.
@@ -600,18 +738,13 @@ class BotEngine:
         timeframe, tramos y coste asumido. Sin eso, un modelo entrenado en H1 con
         1,2 pips de spread se ve idéntico a uno de D1 con 35.
         """
-        from .rl.registry import ModelRegistry
-
         vacio = {"active_model": None, "active_model_instrument": None,
                  "active_model_timeframe": None, "active_model_info": None}
-        try:
-            registry = ModelRegistry()
-            run_id = registry.active_id(self.symbol())
-            record = registry.get(run_id) if run_id else None
-        except Exception:
-            return vacio
+        record = self._active_model_record()
         if record is None:
             return vacio
+        from .rl.registry import meets_acceptance
+
         return {
             "active_model": record.run_id,
             "active_model_instrument": record.instrument,
@@ -625,6 +758,7 @@ class BotEngine:
                 or record.env_params.get("instrument", {}).get("typical_spread_pips"),
                 "max_units": record.env_params.get("max_units"),
                 "test_metrics": record.test_metrics,
+                "meets_acceptance": meets_acceptance(record),
             },
         }
 
@@ -644,6 +778,19 @@ class BotEngine:
             else 0.0
         )
         daily_pl_abs = round(equity - day_start, 2) if equity and day_start else 0.0
+        # La conexión puede caer después de account_info(). El status es una
+        # lectura observacional: nunca debe convertir esa transición en un 500.
+        net_position = 0
+        if connected:
+            try:
+                net_position = int(getattr(self.broker, "position", 0))
+            except Exception:
+                connected = False
+        sp = self.strategy_params()
+        modelo = self._active_model_record()
+        # Con FSRPPO y modelo activo el reloj lo fija el modelo; el ajuste manual
+        # queda inerte y la interfaz tiene que poder decirlo.
+        manda_el_modelo = sp.active_strategy == "fsrppo" and modelo is not None
         return {
             "running": self.running and not self._halted_today(),
             "paused": not self.running,
@@ -658,7 +805,11 @@ class BotEngine:
             "asset_class": self.spec().asset_class,
             "digits": self.spec().digits,
             "lot_size": getattr(self.broker, "lot_size", self.spec().lot_size),
-            "active_strategy": self.strategy_params().active_strategy,
+            "active_strategy": sp.active_strategy,
+            # El reloj de decisión: cada cuánto opera y quién lo fija.
+            "timeframe": self.effective_timeframe(),
+            "timeframe_setting": sp.timeframe,
+            "timeframe_source": "modelo" if manda_el_modelo else "ajuste",
             "account": info,
             "daily_pl_pct": daily_pl_pct,
             "daily_pl_abs": daily_pl_abs,
@@ -672,7 +823,7 @@ class BotEngine:
                 if self._last_processed
                 else self.store.get_state("last_processed_boundary")
             ),
-            "net_position": int(getattr(self.broker, "position", 0)),
+            "net_position": net_position,
             **self._active_model_status(),
             "last_decision": self.store.get_state("last_decision"),
         }

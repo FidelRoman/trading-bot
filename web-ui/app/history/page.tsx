@@ -10,23 +10,27 @@ import type { Trade } from "@/lib/types";
 export default function History() {
   const { status, candleVersion } = useLive();
   const [trades, setTrades] = useState<Trade[]>([]);
+  const [error, setError] = useState("");
   const stats = status?.stats;
 
   useEffect(() => {
-    getJSON<Trade[]>("/api/trades?limit=200").then(setTrades).catch(() => {});
+    getJSON<Trade[]>("/api/trades?limit=200")
+      .then((rows) => { setTrades(rows); setError(""); })
+      .catch(() => setError("No se pudo cargar el historial de operaciones."));
   }, [candleVersion]);
 
   return (
     <>
       <div className="metric-row inner">
-        <div className="metric-card"><div className="m-lbl">TRADES</div><div className="m-val">{stats?.trades ?? "—"}</div></div>
-        <div className="metric-card"><div className="m-lbl">WIN RATE</div><div className="m-val">{fmt(stats?.win_rate_pct, 1)}%</div></div>
+        <div className="metric-card"><div className="m-lbl">OPERACIONES</div><div className="m-val">{stats?.trades ?? "—"}</div></div>
+        <div className="metric-card"><div className="m-lbl">TASA DE ACIERTO</div><div className="m-val">{fmt(stats?.win_rate_pct, 1)}%</div></div>
         <div className="metric-card"><div className="m-lbl">PROFIT FACTOR</div><div className="m-val">{stats?.profit_factor == null ? "—" : fmt(stats.profit_factor)}</div></div>
         <div className="metric-card"><div className="m-lbl">PIPS NETOS</div><div className="m-val">{fmt(stats?.total_pips, 1)}</div></div>
       </div>
       <div className="card">
-        <div className="card-head"><div className="card-title">⟲ TRADE HISTORY</div></div>
+        <div className="card-head"><div className="card-title">HISTORIAL DE OPERACIONES</div></div>
         <div className="table-wrap">
+          {error && <div className="inline-alert" role="alert">{error}</div>}
           <table>
             <thead>
               <tr>
@@ -38,7 +42,7 @@ export default function History() {
               {trades.map((t, i) => (
                 <tr key={t.id ?? i}>
                   <td className={t.side === "long" ? "dir-long" : "dir-short"}>
-                    {t.side === "long" ? "▲ BUY" : "▼ SELL"}
+                    {t.side === "long" ? "▲ COMPRA" : "▼ VENTA"}
                   </td>
                   <td>{fmt(t.units, 0)}</td>
                   <td>{fmtPx(t.entry_rate)}</td>

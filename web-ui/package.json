@@ -2,9 +2,13 @@
   "name": "fx-command-center",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "scripts": {
     "dev": "NEXT_PUBLIC_BACKEND_PORT=${NEXT_PUBLIC_BACKEND_PORT:-8000} next dev",
-    "build": "NEXT_EXPORT=1 next build"
+    "build": "NEXT_EXPORT=1 next build",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "lightweight-charts": "^4.1.3",
