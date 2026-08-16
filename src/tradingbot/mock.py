@@ -216,8 +216,8 @@ class MockBroker:
                     "units": units,
                     "open_rate": round(fill, 5),
                     "open_time": datetime.now(timezone.utc).isoformat(),
-                    "stop": round(sl, 5) if stop_pips > 0 else (0.0 if side == "long" else float('inf')),
-                    "limit": round(take_profit, 5) if take_profit > 0 else (float('inf') if side == "long" else 0.0),
+                    "stop": round(sl, 5) if stop_pips > 0 else None,
+                    "limit": round(take_profit, 5) if take_profit > 0 else None,
                 }
             )
             return tid
@@ -304,16 +304,18 @@ class MockBroker:
 
     def _check_sl_tp(self) -> None:
         for t in list(self._trades):
+            stop = t.get("stop")
+            limit = t.get("limit")
             if t["side"] == "long":
-                if self._price <= t["stop"]:
-                    self._settle(t, t["stop"])
-                elif self._price >= t["limit"]:
-                    self._settle(t, t["limit"])
+                if stop is not None and self._price <= stop:
+                    self._settle(t, stop)
+                elif limit is not None and self._price >= limit:
+                    self._settle(t, limit)
             else:
-                if self._price >= t["stop"]:
-                    self._settle(t, t["stop"])
-                elif self._price <= t["limit"]:
-                    self._settle(t, t["limit"])
+                if stop is not None and self._price >= stop:
+                    self._settle(t, stop)
+                elif limit is not None and self._price <= limit:
+                    self._settle(t, limit)
 
     def _settle(self, t: dict, price: float) -> None:
         d = 1 if t["side"] == "long" else -1

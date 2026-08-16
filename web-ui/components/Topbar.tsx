@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 import ConfirmDialog from "./ConfirmDialog";
-import { clearApiToken, postJSON } from "@/lib/api";
+import { postJSON } from "@/lib/api";
 import { useLive } from "@/lib/live";
 import type { Status } from "@/lib/types";
 
@@ -67,11 +67,6 @@ export default function Topbar() {
     }
   }
 
-  function logout() {
-    clearApiToken();
-    window.location.reload();
-  }
-
   return (
     <header className="topbar">
       <div className="topbar-heading">
@@ -92,9 +87,6 @@ export default function Topbar() {
         </button>
         <button className="btn btn-stop" disabled={!status || !isOn || busy} onClick={() => setPendingRun(false)}>
           DETENER BOT
-        </button>
-        <button className="link-btn" onClick={logout} aria-label="Cerrar sesion del panel">
-          SALIR
         </button>
       </div>
       {message && <div className="topbar-message" role="status" aria-live="polite">{message}</div>}

@@ -5,9 +5,7 @@ sesión ForexConnect falsa: ampliar, reducir con cierre parcial, dar la vuelta a
 signo y aplanar. Sin sesión real ni credenciales.
 """
 import pytest
-from forexconnect import fxcorepy
-
-from tradingbot.broker import FxcmBroker
+from tradingbot.broker import FxcmBroker, fxcorepy
 from tradingbot.config import FxcmCredentials
 
 

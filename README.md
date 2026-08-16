@@ -178,6 +178,8 @@ caffeinate -s uv run uvicorn tradingbot.web.app:app --port 8000 \
   Puedes dejar el proceso activo directamente con:
 
     caffeinate -s uv run uvicorn tradingbot.web.app:app --port 8000 --proxy-headers --forwarded-allow-ips="*"
+    caffeinate -s uv run uvicorn tradingbot.web.app:app --host 0.0.0.0 --port 8000 \
+  --proxy-headers --forwarded-allow-ips="*"
     
 Abre <http://localhost:8000> e introduce el `BOT_API_TOKEN`. El bot opera
 mientras el proceso esté vivo y la Mac despierta (de ahí `caffeinate -s`).
