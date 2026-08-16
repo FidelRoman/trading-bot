@@ -214,3 +214,32 @@ def test_un_reinicio_no_repite_la_ultima_vela(tmp_path, monkeypatch):
     eng = BotEngine(BrokerConVelas(marcas_h4(10)), store, load_settings())
 
     assert eng._last_processed == procesada
+
+
+def test_forex_market_schedule_weekend_detection():
+    from tradingbot.engine import forex_market_schedule
+
+    # Miércoles 14:00 UTC -> Abierto
+    is_open, msg, next_open = forex_market_schedule(datetime(2026, 8, 12, 14, 0, tzinfo=UTC))
+    assert is_open is True
+    assert next_open is None
+
+    # Viernes 22:00 UTC -> Cerrado
+    is_open, msg, next_open = forex_market_schedule(datetime(2026, 8, 14, 22, 0, tzinfo=UTC))
+    assert is_open is False
+    assert next_open == datetime(2026, 8, 16, 21, 0, tzinfo=UTC)
+
+    # Sábado 12:00 UTC -> Cerrado
+    is_open, msg, next_open = forex_market_schedule(datetime(2026, 8, 15, 12, 0, tzinfo=UTC))
+    assert is_open is False
+    assert next_open == datetime(2026, 8, 16, 21, 0, tzinfo=UTC)
+
+    # Domingo 14:00 UTC -> Cerrado
+    is_open, msg, next_open = forex_market_schedule(datetime(2026, 8, 16, 14, 0, tzinfo=UTC))
+    assert is_open is False
+    assert next_open == datetime(2026, 8, 16, 21, 0, tzinfo=UTC)
+
+    # Domingo 22:00 UTC -> Abierto
+    is_open, msg, next_open = forex_market_schedule(datetime(2026, 8, 16, 22, 0, tzinfo=UTC))
+    assert is_open is True
+    assert next_open is None

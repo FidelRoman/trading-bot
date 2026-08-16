@@ -97,6 +97,54 @@ def last_closed_boundary(now: datetime, timeframe: str = "m15") -> datetime:
     return datetime.fromtimestamp(current_open - seconds, tz=timezone.utc)
 
 
+def forex_market_schedule(now: Optional[datetime] = None) -> tuple[bool, str, Optional[datetime]]:
+    """Calcula si el mercado Forex está abierto en `now` (UTC).
+
+    El mercado Forex abre el domingo a las 21:00 UTC (17:00 EST) y cierra el
+    viernes a las 21:00 UTC (17:00 EST).
+    Devuelve (is_open, status_message, next_open_dt).
+    """
+    now_utc = now or datetime.now(timezone.utc)
+    if now_utc.tzinfo is None:
+        now_utc = now_utc.replace(tzinfo=timezone.utc)
+
+    weekday = now_utc.weekday()  # Lunes=0, ..., Viernes=4, Sábado=5, Domingo=6
+    hour = now_utc.hour
+    minute = now_utc.minute
+
+    # Viernes después de las 21:00 UTC
+    if weekday == 4 and (hour > 21 or (hour == 21 and minute >= 0)):
+        days_ahead = 2
+        next_open = (now_utc + timedelta(days=days_ahead)).replace(
+            hour=21, minute=0, second=0, microsecond=0
+        )
+        remaining = next_open - now_utc
+        hrs, mins = divmod(int(remaining.total_seconds() // 60), 60)
+        msg = f"Mercado cerrado por fin de semana. Apertura estimada: domingo a las 21:00 UTC (en {hrs}h {mins}m)."
+        return False, msg, next_open
+
+    # Sábado completo
+    if weekday == 5:
+        days_ahead = 1
+        next_open = (now_utc + timedelta(days=days_ahead)).replace(
+            hour=21, minute=0, second=0, microsecond=0
+        )
+        remaining = next_open - now_utc
+        hrs, mins = divmod(int(remaining.total_seconds() // 60), 60)
+        msg = f"Mercado cerrado por fin de semana. Apertura estimada: domingo a las 21:00 UTC (en {hrs}h {mins}m)."
+        return False, msg, next_open
+
+    # Domingo antes de las 21:00 UTC
+    if weekday == 6 and hour < 21:
+        next_open = now_utc.replace(hour=21, minute=0, second=0, microsecond=0)
+        remaining = next_open - now_utc
+        hrs, mins = divmod(int(remaining.total_seconds() // 60), 60)
+        msg = f"Mercado cerrado por fin de semana. Apertura estimada: hoy domingo a las 21:00 UTC (en {hrs}h {mins}m)."
+        return False, msg, next_open
+
+    return True, "Mercado abierto", None
+
+
 class BotEngine:
     def __init__(self, broker, store: Store, settings: Settings):
         self.broker = broker
@@ -108,6 +156,10 @@ class BotEngine:
         # cada vuelta de 5 s mientras se espera al cierre de la vela.
         self._last_poll: Optional[datetime] = None
         self._last_equity_snap = 0.0
+        self._connect_retry_delay = 15.0
+        self._last_connect_attempt = 0.0
+        self._last_connect_log = 0.0
+        self._market_closed_logged = False
         self._policy = None
         # Clave de la política cacheada: (símbolo, run_id). El símbolo entra en la
         # clave porque el activo depende del instrumento, no solo del modelo.
@@ -409,15 +461,54 @@ class BotEngine:
             except Exception:
                 log.exception("Error notificando evento %s", kind)
 
+    def _is_simulated(self) -> bool:
+        mode = str(getattr(self.broker, "mode", "")).lower()
+        return mode.startswith("sim") or mode == "paper"
+
+    def market_status(self, now: Optional[datetime] = None) -> tuple[bool, str, Optional[datetime]]:
+        if self._is_simulated():
+            return True, "Modo simulado activo", None
+        return forex_market_schedule(now)
+
     def _ensure_connected(self) -> None:
-        if not self.broker.connected:
-            try:
-                self.broker.connect()
-            except Exception as exc:
-                if _time.monotonic() - getattr(self, "_last_connect_log", 0) > 30:
-                    self._last_connect_log = _time.monotonic()
-                    log.warning("No se pudo conectar al bróker: %s", exc)
-                    self.store.log("warn", f"Conexión no disponible: {exc}")
+        if self.broker.connected:
+            self._connect_retry_delay = 15.0
+            self._market_closed_logged = False
+            return
+
+        now = datetime.now(timezone.utc)
+        is_open, market_msg, next_open = self.market_status(now)
+
+        if not is_open:
+            # Fin de semana: pausar reintentos para no gastar recursos
+            if not self._market_closed_logged:
+                self._market_closed_logged = True
+                log.info("%s Pausando reintentos de conexión con FXCM.", market_msg)
+                self.store.log("warn", market_msg)
+            return
+
+        # Mercado abierto: reintentar con backoff exponencial inteligente
+        now_mono = _time.monotonic()
+        if now_mono - self._last_connect_attempt < self._connect_retry_delay:
+            return
+
+        self._last_connect_attempt = now_mono
+        try:
+            self.broker.connect()
+            self._connect_retry_delay = 15.0
+            self._market_closed_logged = False
+            log.info("Conectado con éxito a FXCM (%s)", self.broker.instrument)
+            self.store.log("info", f"Conexión establecida con FXCM ({self.broker.instrument})")
+        except Exception as exc:
+            self._connect_retry_delay = min(self._connect_retry_delay * 2, 300.0)
+            if now_mono - self._last_connect_log > 60:
+                self._last_connect_log = now_mono
+                log.warning(
+                    "No se pudo conectar al bróker: %s. Próximo reintento en %.0f s",
+                    exc,
+                    self._connect_retry_delay,
+                )
+                self.store.log("warn", f"Conexión no disponible ({exc}). Reintentando en {int(self._connect_retry_delay)}s")
 
     def _maybe_snapshot_equity(self) -> None:
         if _time.monotonic() - self._last_equity_snap < 60:
@@ -791,11 +882,15 @@ class BotEngine:
         # Con FSRPPO y modelo activo el reloj lo fija el modelo; el ajuste manual
         # queda inerte y la interfaz tiene que poder decirlo.
         manda_el_modelo = sp.active_strategy == "fsrppo" and modelo is not None
+        market_open, market_msg, next_open = self.market_status()
         return {
             "running": self.running and not self._halted_today(),
             "paused": not self.running,
             "halted_today": self._halted_today(),
             "connected": connected,
+            "market_open": market_open,
+            "market_status": market_msg,
+            "next_market_open": next_open.isoformat() if next_open else None,
             "mode": getattr(self.broker, "mode", "fxcm"),
             # La interfaz avisa distinto según si las órdenes son reales o no, así
             # que el modo y el instrumento viajan en cada status.

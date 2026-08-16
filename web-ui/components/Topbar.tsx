@@ -24,8 +24,15 @@ export default function Topbar() {
   const [pendingRun, setPendingRun] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const isWeekendClosed = status?.market_open === false && !status?.connected;
   const isOn = !!status && !status.paused;
-  const label = status?.halted_today ? "LÍMITE DIARIO" : status?.paused ? "PAUSADO" : "OPERANDO";
+  const label = status?.halted_today
+    ? "LÍMITE DIARIO"
+    : isWeekendClosed
+    ? "MERCADO CERRADO"
+    : status?.paused
+    ? "PAUSADO"
+    : "OPERANDO";
   const connection = status?.account?.connection ?? "";
   const real = Boolean(status?.live_execution && (connection === "Real" || status?.mode.includes("real")));
   const demo = Boolean(status?.live_execution && !real);

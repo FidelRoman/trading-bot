@@ -30,6 +30,9 @@ export interface Status {
   paused: boolean;
   halted_today: boolean;
   connected: boolean;
+  market_open?: boolean;
+  market_status?: string;
+  next_market_open?: string | null;
   mode: string;
   /** true = las órdenes van de verdad a FXCM (ni sim ni papel). */
   live_execution?: boolean;

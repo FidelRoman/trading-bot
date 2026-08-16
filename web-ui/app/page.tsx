@@ -99,6 +99,11 @@ export default function Dashboard() {
               ))}
             </div>
           </div>
+          {status?.market_open === false && !status?.connected && (
+            <div className="inline-alert" style={{ background: "rgba(59, 130, 246, 0.12)", borderColor: "rgba(59, 130, 246, 0.3)", color: "#93c5fd", marginBottom: "12px" }} role="status">
+              <strong>Mercado cerrado:</strong> {status.market_status} El bot reanudará la conexión automáticamente al abrir el mercado.
+            </div>
+          )}
           {dataError && <div className="inline-alert" role="alert">{dataError}</div>}
           <CandleChart candles={candles} bands={bands} markers={markers} digits={digits} label={`Gráfico de velas de ${symbol} en ${tf.toUpperCase()}`} tall />
           <div className="chart-foot">
