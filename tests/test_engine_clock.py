@@ -243,3 +243,92 @@ def test_forex_market_schedule_weekend_detection():
     is_open, msg, next_open = forex_market_schedule(datetime(2026, 8, 16, 22, 0, tzinfo=UTC))
     assert is_open is True
     assert next_open is None
+
+
+# -- calendario por clase de activo ---------------------------------------
+
+SABADO = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize("asset_class", ["forex", "index", "commodity", "bullion", "treasury"])
+def test_la_semana_continua_cubre_los_cfd_sobre_indices_y_materias(asset_class):
+    """Índices, materias, metales y bonos cotizan en la ventana de divisas."""
+    from tradingbot.engine import market_schedule
+
+    is_open, _, next_open = market_schedule(asset_class, SABADO)
+    assert is_open is False
+    assert next_open == datetime(2026, 8, 16, 21, 0, tzinfo=UTC)
+
+
+def test_la_cripto_no_cierra_el_fin_de_semana():
+    """El calendario de divisas vetaba en sábado algo que cotiza los 7 días."""
+    from tradingbot.engine import market_schedule
+
+    is_open, msg, next_open = market_schedule("crypto", SABADO)
+    assert is_open is True
+    assert next_open is None
+    assert "24/7" in msg
+
+
+@pytest.mark.parametrize("asset_class", ["share", "other"])
+def test_lo_que_no_sigue_la_semana_continua_no_se_veta(asset_class):
+    """Una acción depende de su bolsa, no de la ventana de divisas.
+
+    Sin horario fiable no se inventa uno: el filtro de sesión de ``entry_allowed``
+    y el propio bróker son los que deciden.
+    """
+    from tradingbot.engine import market_schedule
+
+    assert market_schedule(asset_class, SABADO)[0] is True
+
+
+# -- la sesión no depende del calendario ----------------------------------
+
+class BrokerQueCuentaConexiones:
+    """Bróker desconectado que registra cada intento de ``connect()``."""
+
+    mode = "fxcm-demo"
+    instrument = "EUR/USD"
+    spec = INSTRUMENT_SEEDS["EUR/USD"]
+
+    def __init__(self):
+        self.connected = False
+        self.intentos = 0
+
+    def connect(self):
+        self.intentos += 1
+        self.connected = True
+
+
+def test_se_conecta_aunque_el_mercado_este_cerrado(tmp_path, monkeypatch):
+    """Sin sesión no hay saldo, ni precios, ni órdenes manuales.
+
+    Condicionar ``connect()`` al calendario dejaba el panel ciego el fin de
+    semana y hacía imposible mandar una orden a mano.
+    """
+    import tradingbot.engine as engine_mod
+
+    broker = BrokerQueCuentaConexiones()
+    eng = make_engine(tmp_path, broker)
+
+    monkeypatch.setattr(
+        engine_mod, "datetime", _RelojFijo(SABADO), raising=True
+    )
+    eng._ensure_connected()
+
+    assert broker.intentos == 1
+    assert broker.connected is True
+    assert eng.market_status(SABADO)[0] is False
+
+
+class _RelojFijo:
+    """``datetime`` con ``now()`` congelado; el resto se delega al real."""
+
+    def __init__(self, momento):
+        self._momento = momento
+
+    def now(self, tz=None):
+        return self._momento
+
+    def __getattr__(self, name):
+        return getattr(datetime, name)

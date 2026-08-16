@@ -62,7 +62,6 @@ grep -rl "localhost:8000" web-ui/out/ ; echo "(vacio = correcto)"
 ## 4. Arranque local — ✅
 
 ```bash
-echo "BOT_API_TOKEN=$(openssl rand -hex 32)" >> .env    # solo la primera vez
 caffeinate -s uv run uvicorn tradingbot.web.app:app --port 8000 \
   --proxy-headers --forwarded-allow-ips="*"
 ```
@@ -74,15 +73,10 @@ curl -s localhost:8000/healthz
 #  {"ok":true,"ui_built":true}
 
 curl -s -o /dev/null -w '%{http_code}\n' localhost:8000/api/status
-#  401
-
-curl -s -o /dev/null -w '%{http_code}\n' \
-  -H "Authorization: Bearer $(grep '^BOT_API_TOKEN=' .env | cut -d= -f2)" \
-  localhost:8000/api/status
-#  200
+#  200  (el backend no autentica: ver "Acceso desde otro dispositivo" en docs/local.md)
 
 curl -s -o /dev/null -w '%{http_code}\n' localhost:8000/
-#  200  (la interfaz se sirve sin token; los datos no)
+#  200
 ```
 
 ⏳ En el navegador: abre <http://localhost:8000>, pega el token, y confirma que
@@ -135,9 +129,7 @@ caffeinate -s uv run uvicorn tradingbot.web.app:app --port 8000 \
 Verifica antes de darle a INICIAR:
 
 ```bash
-TOKEN=$(grep '^BOT_API_TOKEN=' .env | cut -d= -f2)
-curl -s -H "Authorization: Bearer $TOKEN" localhost:8000/api/instrument \
-  | python3 -m json.tool
+curl -s localhost:8000/api/instrument | python3 -m json.tool
 #  execution_mode: "live", connection: "Demo", symbol: el que quieras operar
 ```
 
@@ -161,7 +153,7 @@ exige confirmar el destino Real, pero no bloquea por rentabilidad: un modelo
 marcado «NO VALIDADO» o cualquiera de las estrategias puede operar si lo decides.
 
 Para volver atrás en cualquier momento: DETENER en el panel, o
-`curl -X POST -H "Authorization: Bearer $TOKEN" localhost:8000/api/control/pause`.
+`curl -X POST localhost:8000/api/control/pause`.
 
 ## 8. Tareas pesadas — ⏳ (ninguna se ha lanzado)
 
@@ -209,9 +201,8 @@ El universo sale de la tabla OFFERS de tu cuenta, no de una lista fija:
 
 ```bash
 # Con el backend arriba y credenciales FXCM:
-TOKEN=$(grep '^BOT_API_TOKEN=' .env | cut -d= -f2)
-curl -s -X POST -H "Authorization: Bearer $TOKEN" localhost:8000/api/instruments/refresh
-curl -s -H "Authorization: Bearer $TOKEN" "localhost:8000/api/instruments?tradable=1" \
+curl -s -X POST localhost:8000/api/instruments/refresh
+curl -s "localhost:8000/api/instruments?tradable=1" \
   | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d['instruments']),'operables')"
 ```
 

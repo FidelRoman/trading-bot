@@ -140,7 +140,7 @@ es donde el método está validado.
 
 ## Requisitos
 
-- macOS ARM64 con Python 3.10 para el wheel local de `forexconnect`
+- macOS ARM64 con un Python 3.10 **de libpython dinámica** (ver abajo)
 - Node.js 24.11.1 recomendado (`nvm use` lee `.nvmrc`; Next exige ≥20.9)
 - [uv](https://docs.astral.sh/uv/)
 - Cuenta FXCM **demo** (gratis en fxcm.com) para datos en vivo — opcional: sin
@@ -149,22 +149,41 @@ es donde el método está validado.
 ## Instalación
 
 ```bash
-uv sync                                     # instala Python 3.10 + dependencias
+brew install python@3.10
+uv venv --python /opt/homebrew/opt/python@3.10/bin/python3.10
+uv sync                                     # dependencias
 ./scripts/fix_forexconnect_macos.sh         # re-enlaza el binario FXCM (solo macOS)
 cp .env.example .env                        # y completa FXCM_USER / FXCM_PASS
-echo "BOT_API_TOKEN=$(openssl rand -hex 32)" >> .env
 cd web-ui && npm install && npm run build   # compila la interfaz a web-ui/out/
 ```
 
 Python está fijado a **3.10** por el único wheel de `forexconnect` para macOS
 ARM64. Hay que re-ejecutar `fix_forexconnect_macos.sh` después de cada `uv sync`.
 
+### Por qué no vale el Python que instala `uv`
+
+El wheel de `forexconnect` trae `fxcorepy.so` enlazado contra el Python framework
+de python.org, y `fix_forexconnect_macos.sh` re-apunta esa referencia al
+intérprete del entorno. Los Python que instala `uv`
+(`cpython-3.10-macos-aarch64-none`) llevan CPython enlazado **estáticamente
+dentro del ejecutable**, así que apuntar `fxcorepy.so` a su
+`libpython3.10.dylib` carga una **segunda copia del runtime** en el mismo
+proceso. `fxcorepy` inicializa contra esa copia, que no tiene estado de
+intérprete, y `PyCapsule_Import` revienta con `Segmentation fault: 11`. Como es
+una señal y no una excepción, se lleva por delante el proceso `uvicorn` entero.
+
+De ahí el `uv venv --python …python@3.10…`: Homebrew compila CPython con
+`--enable-framework`, su ejecutable carga la libpython de forma dinámica y el
+proceso acaba con **un solo** runtime. `fix_forexconnect_macos.sh` comprueba esa
+condición y aborta si no se cumple, en vez de dejar un entorno que solo falla al
+conectar con dinero de por medio.
+
 ## Uso
 
 ```bash
 uv run pytest                                  # batería completa
 
-# Modo Simulado (pruebas locales, sin credenciales o en fines de semana):
+# Modo Simulado (pruebas locales, sin credenciales ni sesión FXCM):
 MOCK=1 uv run uvicorn tradingbot.web.app:app --port 8000 \
   --proxy-headers --forwarded-allow-ips="*"
 
@@ -173,21 +192,35 @@ caffeinate -s uv run uvicorn tradingbot.web.app:app --port 8000 \
   --proxy-headers --forwarded-allow-ips="*"
 ```
 
- ### Cómo dejarlo corriendo:
+### Cómo dejarlo corriendo
 
-  Puedes dejar el proceso activo directamente con:
-
-    caffeinate -s uv run uvicorn tradingbot.web.app:app --port 8000 --proxy-headers --forwarded-allow-ips="*"
-    caffeinate -s uv run uvicorn tradingbot.web.app:app --host 0.0.0.0 --port 8000 \
+```bash
+caffeinate -s uv run uvicorn tradingbot.web.app:app --port 8000 \
   --proxy-headers --forwarded-allow-ips="*"
-    
-Abre <http://localhost:8000> e introduce el `BOT_API_TOKEN`. El bot opera
-mientras el proceso esté vivo y la Mac despierta (de ahí `caffeinate -s`).
+```
 
-Para acceder desde fuera de casa, `./scripts/tunnel.sh` publica ese puerto en una
-URL HTTPS de Cloudflare sin abrir puertos del router; los datos no salen del
-disco local. Detalles, túnel con URL estable y desarrollo con recarga en caliente
-(`npm run dev`): [`docs/local.md`](docs/local.md).
+Abre <http://localhost:8000>. El bot opera mientras el proceso esté vivo y la Mac
+despierta (de ahí `caffeinate -s`).
+
+### Acceso desde otro dispositivo
+
+El backend **no autentica**: quien alcanza el puerto puede ver la cuenta y mandar
+órdenes. Por eso escucha solo en `127.0.0.1` y el acceso remoto va por
+[Tailscale](https://tailscale.com), que es una red privada entre tus máquinas:
+
+```bash
+tailscale serve --bg 8000
+```
+
+Eso publica el panel en `https://<máquina>.<tailnet>.ts.net/` **solo para tus
+dispositivos**, sin exponerlo a la red local ni a Internet. Requiere activar los
+certificados HTTPS del tailnet en el panel de Tailscale. El WebSocket viaja por
+el mismo origen, así que no hay nada más que configurar.
+
+`./scripts/tunnel.sh` (Cloudflare) sigue existiendo, pero publica en **Internet**
+y sin token deja las órdenes al alcance de cualquiera que dé con la URL: pide una
+confirmación explícita antes de arrancar. Detalles y desarrollo con recarga en
+caliente (`npm run dev`): [`docs/local.md`](docs/local.md).
 
 ## Advertencias
 
@@ -197,6 +230,8 @@ disco local. Detalles, túnel con URL estable y desarrollo con recarga en calien
   la estrategia está escrito en `PLAN.md`: Sharpe > 0 y CRR > Buy&Hold en el tramo
   de test, en al menos 7 de 10 semillas. Si no se cumple, el bot se queda en
   backtest.
-- El servidor protege `/api/*` y `/ws` con `BOT_API_TOKEN` y falla cerrado si no
-  está configurado. Al exponer el puerto por un túnel, ese token es lo único que
-  separa tus datos de Internet: genéralo largo y no lo compartas.
+- El servidor **no autentica** `/api/*` ni `/ws`: cualquiera que alcance el
+  puerto puede consultar la cuenta y enviar órdenes. Es una decisión deliberada
+  para el uso local, y depende de que el puerto solo sea alcanzable desde
+  `localhost` y desde tu tailnet. No lo publiques en Internet sin poner delante
+  autenticación.

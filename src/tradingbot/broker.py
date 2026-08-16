@@ -13,59 +13,20 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import pandas as pd
-class _CommonFallback:
-    @staticmethod
-    def get_account(fc, account_id=None):
-        if hasattr(fc, "get_table"):
-            for acc in fc.get_table(getattr(ForexConnect, "ACCOUNTS", "Accounts")):
-                if account_id is None or getattr(acc, "account_id", None) == account_id:
-                    return acc
-        return None
 
-    @staticmethod
-    def get_offer(fc, instrument: str):
-        if hasattr(fc, "get_table"):
-            for offer in fc.get_table(getattr(ForexConnect, "OFFERS", "Offers")):
-                if getattr(offer, "instrument", None) == instrument:
-                    return offer
-        return None
-
-    @staticmethod
-    def get_trade(fc, account_id: str, offer_id: str):
-        if hasattr(fc, "get_table"):
-            for trade in fc.get_table(getattr(ForexConnect, "TRADES", "Trades")):
-                if getattr(trade, "account_id", None) == account_id and getattr(trade, "offer_id", None) == offer_id:
-                    return trade
-        return None
-
-Common = _CommonFallback
-
-class _Constants:
-    class SubscriptionStatuses:
-        TRADABLE = "T"
-    class Commands:
-        SET_SUBSCRIPTION_STATUS = "SetSubscriptionStatus"
-    class Orders:
-        TRUE_MARKET_OPEN = "OM"
-        TRUE_MARKET_CLOSE = "CM"
-    class Peg:
-        FROM_OPEN = "M"
-    BUY = "B"
-    SELL = "S"
-
-class _Fxcorepy:
-    Constants = _Constants
-
-fxcorepy = _Fxcorepy
-
-class _ForexConnectFallback:
-    OFFERS = "Offers"
-    TRADES = "Trades"
-    CLOSED_TRADES = "Closed Trades"
-    ACCOUNTS = "Accounts"
-
-ForexConnect = _ForexConnectFallback
-
+try:
+    from forexconnect import Common, ForexConnect, fxcorepy
+except ImportError as exc:  # pragma: no cover - depende del entorno nativo
+    # Sustituir el paquete por stubs no sirve de nada: las constantes y los enums
+    # que expone (O2GRequestParamsEnum entre otros) los usa cada orden, así que
+    # un stub solo cambia un fallo claro aquí por un AttributeError opaco al
+    # enviar. Mejor fallar ahora y decir cómo seguir.
+    raise ImportError(
+        "forexconnect no está disponible en este entorno "
+        f"({exc}). Instálalo con `uv sync` y ejecuta "
+        "`./scripts/fix_forexconnect_macos.sh`, o arranca en modo simulado "
+        "con MOCK=1."
+    ) from exc
 
 from .config import (
     DEFAULT_SPEC,
@@ -124,14 +85,6 @@ class FxcmBroker:
         with self._lock:
             if self._fx is not None:
                 return
-            global ForexConnect, Common, fxcorepy
-            try:
-                from forexconnect import ForexConnect as _RealFC, Common as _RealCommon, fxcorepy as _RealFxcorepy
-                ForexConnect = _RealFC
-                Common = _RealCommon
-                fxcorepy = _RealFxcorepy
-            except Exception as e:
-                raise RuntimeError(f"ForexConnect no está disponible en este entorno ({e}). Usa modo simulado (MOCK=1).")
             fx = ForexConnect()
             fx.login(
                 self._creds.user,

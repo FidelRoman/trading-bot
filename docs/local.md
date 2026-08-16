@@ -27,14 +27,9 @@ Hay que re-ejecutar `fix_forexconnect_macos.sh` después de cada `uv sync`:
 Python está fijado a 3.10 porque es el único wheel de `forexconnect` para macOS
 ARM64.
 
-Genera el token de la API y guárdalo en `.env`:
-
-```bash
-echo "BOT_API_TOKEN=$(openssl rand -hex 32)" >> .env
-```
-
-Sin `BOT_API_TOKEN` el backend responde `503` a todo `/api/*`: falla cerrado a
-propósito, para que un despliegue mal configurado nunca quede abierto.
+El backend **no autentica** `/api/*` ni `/ws`. Es una decisión deliberada para el
+uso local: no hay token que generar, y toda la protección consiste en que el
+puerto solo sea alcanzable desde `localhost` y desde tu tailnet (§4).
 
 ## 2. Compilar la interfaz
 
@@ -73,18 +68,34 @@ permite operar aunque el modelo o la estrategia no estén validados.
   proceso esté vivo.
 - `--proxy-headers` es lo que hace que el backend vea el esquema y la IP reales
   cuando llega a través del túnel.
-- Sin `--host`, uvicorn escucha solo en `127.0.0.1`. Para entrar desde otro
-  dispositivo de la misma wifi, añade `--host 0.0.0.0` y abre
-  `http://<ip-de-la-mac>:8000`.
+- Sin `--host`, uvicorn escucha solo en `127.0.0.1`. **Déjalo así**: como no hay
+  autenticación, `--host 0.0.0.0` abre la cuenta y las órdenes a toda la wifi.
+  Para entrar desde otro dispositivo, usa Tailscale (§4).
 - `MOCK=1` delante del comando arranca en modo simulado, sin credenciales.
 
-Abre <http://localhost:8000>, pega el `BOT_API_TOKEN` y el panel carga.
+Abre <http://localhost:8000> y el panel carga.
 
-## 4. Acceso desde fuera: Cloudflare Tunnel
+## 4. Acceso desde otro dispositivo: Tailscale
+
+Con el backend escuchando solo en `127.0.0.1`, `tailscale serve` lo publica
+dentro de tu tailnet —tus dispositivos y nadie más— sin abrir el puerto a la red
+local ni a Internet:
+
+```bash
+tailscale serve --bg 8000      # publica https://<máquina>.<tailnet>.ts.net/
+tailscale serve status         # ver qué hay publicado
+tailscale serve --https=443 off  # dejar de publicarlo
+```
+
+Requiere tener activados los certificados HTTPS del tailnet (panel de Tailscale →
+DNS → HTTPS Certificates). El WebSocket viaja por el mismo origen y el frontend
+conmuta solo a `wss://` al ver HTTPS, así que no hay nada más que configurar.
+
+### Alternativa: Cloudflare Tunnel (público)
 
 ```bash
 brew install cloudflared
-./scripts/tunnel.sh            # comprueba que el backend responde y abre el túnel
+ACEPTO_EXPONER_SIN_AUTENTICACION=1 ./scripts/tunnel.sh
 ```
 
 Imprime una URL `https://….trycloudflare.com` que apunta a este equipo. Es
@@ -95,13 +106,13 @@ en Cloudflare:
 cloudflared tunnel login
 cloudflared tunnel create bot
 cloudflared tunnel route dns bot bot.tudominio.com
-CLOUDFLARE_TUNNEL=bot ./scripts/tunnel.sh
+CLOUDFLARE_TUNNEL=bot ACEPTO_EXPONER_SIN_AUTENTICACION=1 ./scripts/tunnel.sh
 ```
 
-Lo que protege la URL es el `BOT_API_TOKEN`: la página carga, pero no muestra
-ningún dato hasta introducirlo, y el WebSocket rechaza el handshake sin él. Si
-quieres una segunda barrera antes de que la petición llegue siquiera al bot,
-Cloudflare Access permite exigir tu correo delante del túnel.
+Esta vía publica el bot en **Internet** y no hay token que lo pare: cualquiera
+que dé con la URL puede ver la cuenta y mandar órdenes. Por eso el script exige
+la variable de confirmación. Si la necesitas, pon delante Cloudflare Access, que
+exige tu correo antes de que la petición llegue siquiera al bot.
 
 No hace falta tocar `BOT_ALLOWED_ORIGINS`: la interfaz y la API comparten origen,
 y el backend acepta el WebSocket cuando `Origin` coincide con `Host` — lo que
@@ -135,13 +146,13 @@ uv run python scripts/check_connection.py     # verifica el login FXCM
 ## 7. Verificación
 
 1. `uv run pytest` en verde.
-2. `curl -s -o /dev/null -w '%{http_code}\n' localhost:8000/api/status` → `401`;
-   con `-H "Authorization: Bearer $BOT_API_TOKEN"` → `200`.
+2. `curl -s -o /dev/null -w '%{http_code}\n' localhost:8000/api/status` → `200`.
 3. El panel muestra precios que cambian cada 2 s (WebSocket vivo, no polling).
-4. Con el túnel abierto, la URL pide el token y luego muestra los mismos datos.
+4. Desde otro dispositivo de la tailnet, la URL `.ts.net` muestra los mismos
+   datos; desde fuera de la tailnet no responde.
 5. La cuenta Real mueve dinero real: valida primero en Demo, usa límites de
    riesgo pequeños y no dejes el bot iniciado sin supervisión. El backend pausa el
    bot automáticamente tanto al conectar una cuenta Real desde el panel como al
-   arrancar con `EXECUTION_MODE=live` y `FXCM_CONNECTION=Real`.
+   arrancar con `FXCM_CONNECTION=Real` (sin `MOCK=1`).
 6. Para probar la interfaz sin credenciales y sin riesgo, arranca con
    `MOCK=1` (modo simulado).

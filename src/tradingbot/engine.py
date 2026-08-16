@@ -97,12 +97,17 @@ def last_closed_boundary(now: datetime, timeframe: str = "m15") -> datetime:
     return datetime.fromtimestamp(current_open - seconds, tz=timezone.utc)
 
 
-def forex_market_schedule(now: Optional[datetime] = None) -> tuple[bool, str, Optional[datetime]]:
-    """Calcula si el mercado Forex está abierto en `now` (UTC).
+#: Clases de activo que siguen la semana continua de divisas: domingo 21:00 UTC
+#: (17:00 EST) a viernes 21:00 UTC. Índices, materias primas, metales y bonos se
+#: negocian como CFD sobre esa misma ventana.
+_SEMANA_CONTINUA = ("forex", "index", "commodity", "bullion", "treasury")
 
-    El mercado Forex abre el domingo a las 21:00 UTC (17:00 EST) y cierra el
-    viernes a las 21:00 UTC (17:00 EST).
-    Devuelve (is_open, status_message, next_open_dt).
+
+def forex_market_schedule(now: Optional[datetime] = None) -> tuple[bool, str, Optional[datetime]]:
+    """Calendario de la semana continua de divisas.
+
+    Abre el domingo a las 21:00 UTC (17:00 EST) y cierra el viernes a las 21:00
+    UTC. Devuelve ``(is_open, status_message, next_open_dt)``.
     """
     now_utc = now or datetime.now(timezone.utc)
     if now_utc.tzinfo is None:
@@ -110,38 +115,48 @@ def forex_market_schedule(now: Optional[datetime] = None) -> tuple[bool, str, Op
 
     weekday = now_utc.weekday()  # Lunes=0, ..., Viernes=4, Sábado=5, Domingo=6
     hour = now_utc.hour
-    minute = now_utc.minute
 
-    # Viernes después de las 21:00 UTC
-    if weekday == 4 and (hour > 21 or (hour == 21 and minute >= 0)):
-        days_ahead = 2
-        next_open = (now_utc + timedelta(days=days_ahead)).replace(
-            hour=21, minute=0, second=0, microsecond=0
+    def cerrado(next_open: datetime, dia: str) -> tuple[bool, str, datetime]:
+        hrs, mins = divmod(int((next_open - now_utc).total_seconds() // 60), 60)
+        return False, (
+            f"Mercado cerrado por fin de semana. Apertura estimada: {dia} a las "
+            f"21:00 UTC (en {hrs}h {mins}m)."
+        ), next_open
+
+    if weekday == 4 and hour >= 21:  # viernes, ya cerrado
+        return cerrado(
+            (now_utc + timedelta(days=2)).replace(hour=21, minute=0, second=0, microsecond=0),
+            "domingo",
         )
-        remaining = next_open - now_utc
-        hrs, mins = divmod(int(remaining.total_seconds() // 60), 60)
-        msg = f"Mercado cerrado por fin de semana. Apertura estimada: domingo a las 21:00 UTC (en {hrs}h {mins}m)."
-        return False, msg, next_open
-
-    # Sábado completo
-    if weekday == 5:
-        days_ahead = 1
-        next_open = (now_utc + timedelta(days=days_ahead)).replace(
-            hour=21, minute=0, second=0, microsecond=0
+    if weekday == 5:  # sábado completo
+        return cerrado(
+            (now_utc + timedelta(days=1)).replace(hour=21, minute=0, second=0, microsecond=0),
+            "domingo",
         )
-        remaining = next_open - now_utc
-        hrs, mins = divmod(int(remaining.total_seconds() // 60), 60)
-        msg = f"Mercado cerrado por fin de semana. Apertura estimada: domingo a las 21:00 UTC (en {hrs}h {mins}m)."
-        return False, msg, next_open
+    if weekday == 6 and hour < 21:  # domingo, aún sin abrir
+        return cerrado(
+            now_utc.replace(hour=21, minute=0, second=0, microsecond=0),
+            "hoy domingo",
+        )
 
-    # Domingo antes de las 21:00 UTC
-    if weekday == 6 and hour < 21:
-        next_open = now_utc.replace(hour=21, minute=0, second=0, microsecond=0)
-        remaining = next_open - now_utc
-        hrs, mins = divmod(int(remaining.total_seconds() // 60), 60)
-        msg = f"Mercado cerrado por fin de semana. Apertura estimada: hoy domingo a las 21:00 UTC (en {hrs}h {mins}m)."
-        return False, msg, next_open
+    return True, "Mercado abierto", None
 
+
+def market_schedule(
+    asset_class: str = "forex", now: Optional[datetime] = None
+) -> tuple[bool, str, Optional[datetime]]:
+    """Calendario del instrumento según su clase de activo.
+
+    El bot es multi-instrumento: aplicar el calendario de divisas a todo vetaba
+    la cripto los fines de semana —que en FXCM cotiza los 7 días— y pretendía
+    saber el horario de una acción, que depende de su bolsa y no de la semana
+    continua. Para lo que no se sabe, no se veta: quien decide de verdad si se
+    puede operar es el bróker, rechazando la orden.
+    """
+    if asset_class in _SEMANA_CONTINUA:
+        return forex_market_schedule(now)
+    if asset_class == "crypto":
+        return True, "Mercado abierto (cripto, 24/7)", None
     return True, "Mercado abierto", None
 
 
@@ -340,10 +355,18 @@ class BotEngine:
             log.exception("Orden manual fallida")
             return {"ok": False, "error": str(e)}
         self.store.open_trade(order_id, side, units)
+        # Los paréntesis no sobran: sin ellos el ternario se come toda la
+        # concatenación y una orden sin SL ni TP se registraba como
+        # "— sin SL/TP (orden 123)", sin dirección, unidades ni instrumento.
+        proteccion = (
+            f"SL {sl_pips:.1f} / TP {tp_pips:.1f} pips"
+            if sl_pips > 0 or tp_pips > 0
+            else "sin SL/TP"
+        )
         self.store.log(
             "warn",
-            f"ORDEN MANUAL {('COMPRA' if side == 'long' else 'VENTA')} {units} {self.symbol()} "
-            f"— SL {sl_pips:.1f} / TP {tp_pips:.1f} pips (orden {order_id})" if sl_pips > 0 or tp_pips > 0 else f"— sin SL/TP (orden {order_id})",
+            f"ORDEN MANUAL {'COMPRA' if side == 'long' else 'VENTA'} {units} "
+            f"{self.symbol()} — {proteccion} (orden {order_id})",
         )
         return {"ok": True, "order_id": order_id, "units": units}
 
@@ -468,26 +491,31 @@ class BotEngine:
     def market_status(self, now: Optional[datetime] = None) -> tuple[bool, str, Optional[datetime]]:
         if self._is_simulated():
             return True, "Modo simulado activo", None
-        return forex_market_schedule(now)
+        return market_schedule(self.spec().asset_class, now)
 
     def _ensure_connected(self) -> None:
+        """Mantiene viva la sesión FXCM, esté el mercado abierto o no.
+
+        La sesión no se condiciona al calendario a propósito. Sin ella no hay
+        precios, ni saldo, ni posiciones, ni órdenes manuales: con el mercado
+        cerrado el panel se quedaba ciego y no se podía ni consultar la cuenta.
+        Quien decide si se opera es el overlay de riesgo en ``_candle_tick``,
+        que sí consulta ``market_status``.
+        """
         if self.broker.connected:
             self._connect_retry_delay = 15.0
             self._market_closed_logged = False
             return
 
         now = datetime.now(timezone.utc)
-        is_open, market_msg, next_open = self.market_status(now)
+        is_open, market_msg, _ = self.market_status(now)
+        if not is_open and not self._market_closed_logged:
+            # Se informa una vez y se sigue conectando: el aviso es sobre operar,
+            # no sobre la sesión.
+            self._market_closed_logged = True
+            log.info("%s Se mantiene la sesión, pero no se abrirán posiciones.", market_msg)
+            self.store.log("warn", f"{market_msg} No se abrirán posiciones hasta la apertura.")
 
-        if not is_open:
-            # Fin de semana: pausar reintentos para no gastar recursos
-            if not self._market_closed_logged:
-                self._market_closed_logged = True
-                log.info("%s Pausando reintentos de conexión con FXCM.", market_msg)
-                self.store.log("warn", market_msg)
-            return
-
-        # Mercado abierto: reintentar con backoff exponencial inteligente
         now_mono = _time.monotonic()
         if now_mono - self._last_connect_attempt < self._connect_retry_delay:
             return
@@ -601,6 +629,9 @@ class BotEngine:
             return
         if self.store.current_open_trade() is not None:
             self.store.log("info", "Señal ignorada: ya hay posición abierta")
+            return
+        if not self.market_status(now)[0]:
+            self.store.log("info", "Señal ignorada: mercado cerrado")
             return
         if not entry_allowed(now):
             self.store.log("info", "Señal ignorada: fuera de sesión permitida")
@@ -802,6 +833,8 @@ class BotEngine:
             return "bot pausado"
         if self._halted_today():
             return "bot detenido por hoy"
+        if not self.market_status(now)[0]:
+            return "mercado cerrado"
         if not entry_allowed(now):
             return "fuera de sesión permitida"
 

@@ -132,18 +132,15 @@ uv run uvicorn tradingbot.web.app:app --port 8000
 En el panel, **Modelos** → localiza el `run_id` → **Activar**. O por API:
 
 ```bash
-TOKEN=$(grep '^BOT_API_TOKEN=' .env | cut -d= -f2)
-curl -s -H "Authorization: Bearer $TOKEN" localhost:8000/api/models \
-  | python3 -m json.tool | head -40
+curl -s localhost:8000/api/models | python3 -m json.tool | head -40
 
-curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  localhost:8000/api/models/fsrppo-XXXXXXXX-XXXXXX/activate
+curl -s -X POST localhost:8000/api/models/fsrppo-XXXXXXXX-XXXXXX/activate
 ```
 
 Comprueba que quedó activo y que el instrumento cuadra:
 
 ```bash
-curl -s -H "Authorization: Bearer $TOKEN" localhost:8000/api/status \
+curl -s localhost:8000/api/status \
   | python3 -c "import json,sys; d=json.load(sys.stdin); \
 print('modelo', d.get('active_model'), '| instrumento', d.get('instrument'))"
 ```
