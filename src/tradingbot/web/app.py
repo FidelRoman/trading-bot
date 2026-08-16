@@ -28,7 +28,7 @@ from ..engine import BotEngine
 from ..store import Store
 from ..strategy import add_indicators
 from .backtest_job import UPLOAD_CSV, BacktestJob
-from .auth import BearerAuthMiddleware, allowed_origins
+from .auth import allowed_origins
 from .training_job import TrainingJob
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -228,7 +228,6 @@ app = FastAPI(title="FSRPPO·BOT — FXCM multi-instrumento", lifespan=lifespan)
 # para `next dev`, que sirve el frontend en otro puerto.
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
-app.add_middleware(BearerAuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins(),

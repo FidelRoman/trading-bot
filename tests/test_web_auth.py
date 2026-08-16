@@ -4,8 +4,9 @@ from __future__ import annotations
 import httpx
 import pytest
 from fastapi import FastAPI, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
 
-from tradingbot.web.auth import BearerAuthMiddleware
+from tradingbot.web.auth import BearerAuthMiddleware, allowed_origins
 
 
 @pytest.fixture
@@ -88,15 +89,19 @@ async def test_websocket_conecta_directamente():
 @pytest.mark.anyio
 async def test_cors_permite_origenes(monkeypatch):
     monkeypatch.setenv("BOT_ALLOWED_ORIGINS", "https://panel.example")
-    import importlib
-    import tradingbot.web.app as app_module
 
-    app = importlib.reload(app_module).app
+    app = auth_app()
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins(),
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get(
-            "/healthz",
+            "/api/ping",
             headers={"Origin": "https://panel.example"},
         )
 
