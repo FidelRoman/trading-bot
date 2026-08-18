@@ -1,27 +1,117 @@
 "use client";
-/* Estrategias de Trading (Configuración y Backtesting integrados por estrategia) */
+/* ESTRATEGIAS Y SIMULACIÓN
 
-import { useEffect, useState, useCallback, useRef } from "react";
-import { apiFetch, getJSON, postJSON } from "@/lib/api";
+   Antes esto eran tres acordeones casi idénticos —600 líneas repetidas tres
+   veces— donde configurar y simular estaban mezclados, no había forma de
+   comparar una estrategia con otra, y FSRPPO no aparecía pese a ser
+   seleccionable como estrategia activa.
+
+   Ahora: primero la comparación entre las cuatro, después la configuración de
+   una sola, y la simulación al lado, en su propio panel. */
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { AreaChart } from "@/components/charts";
+import EmptyState from "@/components/ui/EmptyState";
+import Icon from "@/components/ui/Icon";
+import Mark from "@/components/ui/Mark";
+import Notice from "@/components/ui/Notice";
+import { Panel } from "@/components/ui/Panel";
+import Readout from "@/components/ui/Readout";
+import Skeleton from "@/components/ui/Skeleton";
+import { TableFrame } from "@/components/ui/Table";
+import { useToast } from "@/components/ui/Toast";
+import { apiFetch, getJSON, postJSON } from "@/lib/api";
 import { fmt, fmtPx, isoShort, sign } from "@/lib/format";
 import { useLive } from "@/lib/live";
-import type { BotSettings, BacktestState } from "@/lib/types";
+import type { BacktestState, BotSettings } from "@/lib/types";
 
 const TF_OPTIONS = [
   { value: "m5", label: "M5 — 5 minutos" },
-  { value: "m15", label: "M15 — 15 minutos (el del bot)" },
+  { value: "m15", label: "M15 — 15 minutos" },
   { value: "m30", label: "M30 — 30 minutos" },
   { value: "h1", label: "H1 — 1 hora" },
   { value: "h4", label: "H4 — 4 horas" },
   { value: "d1", label: "D1 — diario" },
 ];
 
+interface ParamSpec {
+  key: keyof BotSettings;
+  label: string;
+  min: number;
+  max: number;
+  step?: number;
+  note?: string;
+}
+
+interface StrategySpec {
+  key: string;
+  name: string;
+  premise: string;
+  /** FSRPPO no se configura aquí: sus parámetros son los del entrenamiento. */
+  params: ParamSpec[] | null;
+}
+
+const SHARED_PARAMS: ParamSpec[] = [
+  { key: "atr_period", label: "Período ATR", min: 5, max: 50, step: 1, note: "Velas para medir la volatilidad." },
+  { key: "sl_atr_mult", label: "Stop (× ATR)", min: 0.5, max: 5, step: 0.1, note: "Distancia del stop en múltiplos de ATR." },
+];
+
+const STRATEGIES: StrategySpec[] = [
+  {
+    key: "fsrppo",
+    name: "FSRPPO — posición neta",
+    premise:
+      "El agente entrenado decide la posición neta al cierre de cada vela, sobre la señal FSR ya limpia de ruido.",
+    params: null,
+  },
+  {
+    key: "bollinger",
+    name: "Reversión a la media (Bollinger)",
+    premise:
+      "Compra en la banda inferior y vende en la superior, asumiendo que el precio vuelve a su media.",
+    params: [
+      { key: "bb_period", label: "Período Bollinger", min: 10, max: 50, step: 1, note: "Velas de la media móvil." },
+      { key: "bb_std", label: "Desviación estándar", min: 1, max: 3, step: 0.1, note: "Ancho de las bandas en sigmas." },
+      {
+        key: "min_band_width_pips",
+        label: "Ancho mínimo de banda (pips)",
+        min: 0,
+        max: 50,
+        step: 1,
+        note: "Por debajo de este ancho no opera: el rango es demasiado estrecho para cubrir el spread.",
+      },
+      ...SHARED_PARAMS,
+    ],
+  },
+  {
+    key: "rsi",
+    name: "Estrategia RSI",
+    premise: "Entra contra el extremo cuando el índice de fuerza relativa marca sobrecompra o sobreventa.",
+    params: [
+      { key: "rsi_period", label: "Período RSI", min: 5, max: 50, step: 1 },
+      { key: "rsi_overbought", label: "Límite de sobrecompra", min: 50, max: 90, step: 1, note: "Por encima, se busca venta." },
+      { key: "rsi_oversold", label: "Límite de sobreventa", min: 10, max: 50, step: 1, note: "Por debajo, se busca compra." },
+      ...SHARED_PARAMS,
+    ],
+  },
+  {
+    key: "wyckoff_1",
+    name: "Método Wyckoff 1",
+    premise: "Busca la ruptura de un rango de acumulación confirmada por volumen.",
+    params: [
+      { key: "wyckoff_range_period", label: "Período del rango", min: 5, max: 100, step: 1 },
+      { key: "wyckoff_volume_mult", label: "Confirmación por volumen (×)", min: 1, max: 5, step: 0.1, note: "Volumen mínimo respecto a su media para dar la ruptura por buena." },
+      { key: "wyckoff_tp_mult", label: "Objetivo (× riesgo)", min: 0.5, max: 10, step: 0.1 },
+      ...SHARED_PARAMS,
+    ],
+  },
+];
+
 const isoDay = (d: Date) => d.toISOString().slice(0, 10);
 
-interface BacktestInputs {
+interface SimInputs {
   source: string;
-  timeframe: string;
   dateFrom: string;
   dateTo: string;
   equity: number;
@@ -31,785 +121,656 @@ interface BacktestInputs {
   fixedUnits: number;
 }
 
+const defaultSim = (risk = 0.5, fixed = 0): SimInputs => ({
+  source: "synthetic",
+  dateFrom: isoDay(new Date(Date.now() - 730 * 86400_000)),
+  dateTo: isoDay(new Date()),
+  equity: 10000,
+  spread: 1.2,
+  file: null,
+  riskPerTrade: risk,
+  fixedUnits: fixed,
+});
+
 export default function StrategiesPage() {
-  const { status, backtestVersion } = useLive();
+  const { status, backtestVersion, refreshStatus } = useLive();
+  const { push } = useToast();
   const activeStrategy = status?.active_strategy || "bollinger";
   const simulated = status?.mode === "simulado";
 
-  const [values, setValues] = useState<Record<string, any>>({});
-  const [expanded, setExpanded] = useState<string | null>("bollinger");
-  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
-
-  // Estados independientes de Backtesting por estrategia
-  const [btSettings, setBtSettings] = useState<Record<string, BacktestInputs>>({
-    bollinger: { source: "synthetic", timeframe: "m15", dateFrom: isoDay(new Date(Date.now() - 730 * 86400_000)), dateTo: isoDay(new Date()), equity: 10000, spread: 1.2, file: null, riskPerTrade: 0.5, fixedUnits: 0 },
-    rsi: { source: "synthetic", timeframe: "m15", dateFrom: isoDay(new Date(Date.now() - 730 * 86400_000)), dateTo: isoDay(new Date()), equity: 10000, spread: 1.2, file: null, riskPerTrade: 0.5, fixedUnits: 0 },
-    wyckoff_1: { source: "synthetic", timeframe: "m15", dateFrom: isoDay(new Date(Date.now() - 730 * 86400_000)), dateTo: isoDay(new Date()), equity: 10000, spread: 1.2, file: null, riskPerTrade: 0.5, fixedUnits: 0 },
-  });
-  const [btResults, setBtResults] = useState<Record<string, BacktestState>>({});
-  const [btMsgs, setBtMsgs] = useState<Record<string, { text: string; cls: string } | null>>({});
-  const [runningStrategy, setRunningStrategy] = useState<string | null>(null);
-  const [showTrades, setShowTrades] = useState<Record<string, boolean>>({});
-
+  const [values, setValues] = useState<Record<string, number | string>>({});
+  const [loaded, setLoaded] = useState(false);
+  const [selected, setSelected] = useState<string>("bollinger");
+  const [sim, setSim] = useState<SimInputs>(defaultSim());
+  const [results, setResults] = useState<Record<string, BacktestState>>({});
+  const [running, setRunning] = useState<string | null>(null);
+  const [runNote, setRunNote] = useState<string>("");
+  const [showTrades, setShowTrades] = useState(false);
+  const [saving, setSaving] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Carga de ajustes y último backtest en mount
+  const spec = STRATEGIES.find((s) => s.key === selected) ?? STRATEGIES[1];
+  const result = results[selected];
+
   useEffect(() => {
-    getJSON<BotSettings>("/api/settings").then((s) => {
-      setValues({
-        timeframe: s.timeframe || "m15",
-        bb_period: s.bb_period,
-        bb_std: s.bb_std,
-        atr_period: s.atr_period,
-        sl_atr_mult: s.sl_atr_mult,
-        min_band_width_pips: s.min_band_width_pips,
-        rsi_period: s.rsi_period ?? 14,
-        rsi_overbought: s.rsi_overbought ?? 70,
-        rsi_oversold: s.rsi_oversold ?? 30,
-        wyckoff_range_period: s.wyckoff_range_period ?? 20,
-        wyckoff_volume_mult: s.wyckoff_volume_mult ?? 1.5,
-        wyckoff_tp_mult: s.wyckoff_tp_mult ?? 2.0,
+    getJSON<BotSettings>("/api/settings")
+      .then((s) => {
+        setValues({ ...(s as unknown as Record<string, number | string>) });
+        if (s.active_strategy) setSelected(s.active_strategy);
+        setSim(defaultSim(s.risk_per_trade ? +(s.risk_per_trade * 100).toFixed(2) : 0.5, s.fixed_units ?? 0));
+        setLoaded(true);
+      })
+      .catch(() => {
+        push("No se pudieron cargar los parámetros de las estrategias.", "danger");
+        setLoaded(true);
       });
-      if (s.active_strategy) {
-        setExpanded(s.active_strategy);
-      }
 
-      const initialRisk = s.risk_per_trade ? +(s.risk_per_trade * 100).toFixed(2) : 0.5;
-      const initialFixed = s.fixed_units ?? 0;
-      setBtSettings({
-        bollinger: { source: "synthetic", timeframe: "m15", dateFrom: isoDay(new Date(Date.now() - 730 * 86400_000)), dateTo: isoDay(new Date()), equity: 10000, spread: 1.2, file: null, riskPerTrade: initialRisk, fixedUnits: initialFixed },
-        rsi: { source: "synthetic", timeframe: "m15", dateFrom: isoDay(new Date(Date.now() - 730 * 86400_000)), dateTo: isoDay(new Date()), equity: 10000, spread: 1.2, file: null, riskPerTrade: initialRisk, fixedUnits: initialFixed },
-        wyckoff_1: { source: "synthetic", timeframe: "m15", dateFrom: isoDay(new Date(Date.now() - 730 * 86400_000)), dateTo: isoDay(new Date()), equity: 10000, spread: 1.2, file: null, riskPerTrade: initialRisk, fixedUnits: initialFixed },
-      });
-    }).catch(() => {});
+    getJSON<BacktestState>("/api/backtest")
+      .then((s) => {
+        if (s && s.status === "done" && s.params?.active_strategy)
+          setResults({ [s.params.active_strategy]: s });
+      })
+      .catch(() => {});
+  }, [push]);
 
-    // Recuperar la última simulación realizada
-    getJSON<BacktestState>("/api/backtest").then((s) => {
-      if (s && s.status === "done" && s.params?.active_strategy) {
-        setBtResults({ [s.params.active_strategy]: s });
-      }
-    }).catch(() => {});
-  }, []);
-
-  // Guardar cambios de parámetros (sin activar la estrategia)
-  async function save(strategyKey: string) {
-    const payload: Record<string, any> = {
-      timeframe: values.timeframe || "m15",
-      atr_period: values.atr_period,
-      sl_atr_mult: values.sl_atr_mult,
-    };
-    if (strategyKey === "bollinger") {
-      payload.bb_period = values.bb_period;
-      payload.bb_std = values.bb_std;
-      payload.min_band_width_pips = values.min_band_width_pips;
-    } else if (strategyKey === "rsi") {
-      payload.rsi_period = values.rsi_period;
-      payload.rsi_overbought = values.rsi_overbought;
-      payload.rsi_oversold = values.rsi_oversold;
-    } else if (strategyKey === "wyckoff_1") {
-      payload.wyckoff_range_period = values.wyckoff_range_period;
-      payload.wyckoff_volume_mult = values.wyckoff_volume_mult;
-      payload.wyckoff_tp_mult = values.wyckoff_tp_mult;
-    }
-
-    const r = await postJSON<{ ok: boolean; settings: BotSettings }>("/api/settings", payload);
-    if (r.ok) {
-      setValues({
-        timeframe: r.settings.timeframe || "m15",
-        bb_period: r.settings.bb_period,
-        bb_std: r.settings.bb_std,
-        atr_period: r.settings.atr_period,
-        sl_atr_mult: r.settings.sl_atr_mult,
-        min_band_width_pips: r.settings.min_band_width_pips,
-        rsi_period: r.settings.rsi_period,
-        rsi_overbought: r.settings.rsi_overbought,
-        rsi_oversold: r.settings.rsi_oversold,
-        wyckoff_range_period: r.settings.wyckoff_range_period,
-        wyckoff_volume_mult: r.settings.wyckoff_volume_mult,
-        wyckoff_tp_mult: r.settings.wyckoff_tp_mult,
-      });
-      setMsg({ text: `✓ Parámetros guardados correctamente.`, ok: true });
-    } else {
-      setMsg({ text: "Error al guardar", ok: false });
-    }
-    setTimeout(() => setMsg(null), 5000);
-  }
-
-  const toggleExpand = (key: string) => {
-    setExpanded(expanded === key ? null : key);
-  };
-
-  // Polling de Backtesting
   const refresh = useCallback(async () => {
     try {
       const s = await getJSON<BacktestState>("/api/backtest");
-      
       if (s.status === "queued" || s.status === "running") {
-        if (runningStrategy) {
-          setBtMsgs(prev => ({
-            ...prev,
-            [runningStrategy]: { text: s.note || (s.status === "queued" ? "En cola…" : "Ejecutando…"), cls: "" }
-          }));
-        }
-        if (!pollRef.current) pollRef.current = setInterval(refresh, 15_000);
-      } else {
-        if (pollRef.current) {
-          clearInterval(pollRef.current);
-          pollRef.current = null;
-        }
-
-        const stratKey = s.params?.active_strategy || runningStrategy;
-        if (stratKey) {
-          setBtResults(prev => ({ ...prev, [stratKey]: s }));
-          if (s.status === "error") {
-            setBtMsgs(prev => ({ ...prev, [stratKey]: { text: "Error: " + s.error, cls: "err" } }));
-          } else if (s.status === "done") {
-            setBtMsgs(prev => ({
-              ...prev,
-              [stratKey]: {
-                text: `Terminado ${isoShort(s.finished)} UTC — ${s.candles} velas (${s.source})`,
-                cls: "ok",
-              }
-            }));
-          }
-          if (runningStrategy === stratKey) {
-            setRunningStrategy(null);
-          }
-        }
+        setRunNote(s.note || (s.status === "queued" ? "En cola…" : "Ejecutando…"));
+        if (!pollRef.current) pollRef.current = setInterval(refresh, 5000);
+        return;
       }
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      const key = s.params?.active_strategy || running;
+      if (key) {
+        setResults((prev) => ({ ...prev, [key]: s }));
+        if (s.status === "error") push(s.error ?? "La simulación falló.", "danger");
+        else if (s.status === "done" && running)
+          push(`Simulación terminada: ${s.candles} velas (${s.source}).`);
+        if (running === key) setRunning(null);
+      }
+      setRunNote("");
     } catch {
-      /* backend caído */
+      /* backend caído: el polling de live ya avisa */
     }
-  }, [runningStrategy]);
+  }, [running, push]);
 
   useEffect(() => {
     refresh();
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, [refresh, backtestVersion]);
 
-  // Asegura que en simulado se use sintético
+  // En simulado no hay histórico real que pedir al bróker.
   useEffect(() => {
-    Object.keys(btSettings).forEach((key) => {
-      if (simulated && btSettings[key].source === "fxcm") {
-        setBtSettings(prev => ({
-          ...prev,
-          [key]: { ...prev[key], source: "synthetic" }
-        }));
-      }
-    });
-  }, [simulated]);
+    if (simulated && sim.source === "fxcm") setSim((prev) => ({ ...prev, source: "synthetic" }));
+  }, [simulated, sim.source]);
 
-  // Lanzar Backtest
-  async function runBacktestFor(stratKey: string) {
-    const s = btSettings[stratKey];
-    if (!s) return;
-    setRunningStrategy(stratKey);
-    setBtMsgs(prev => ({ ...prev, [stratKey]: { text: "Preparando datos…", cls: "" } }));
-
+  async function save() {
+    if (!spec.params) return;
+    setSaving(true);
+    const payload: Record<string, unknown> = { timeframe: values.timeframe || "m15" };
+    for (const field of spec.params) payload[field.key] = values[field.key];
     try {
-      if (s.source === "csv" && s.file) {
-        setBtMsgs(prev => ({ ...prev, [stratKey]: { text: "Subiendo CSV…", cls: "" } }));
-        const fd = new FormData();
-        fd.append("file", s.file);
-        const up = await (await apiFetch("/api/backtest/csv", { method: "POST", body: fd })).json();
-        if (!up.ok) {
-          setBtMsgs(prev => ({ ...prev, [stratKey]: { text: "Error subiendo CSV: " + up.error, cls: "err" } }));
-          setRunningStrategy(null);
-          return;
-        }
-      }
+      const r = await postJSON<{ ok: boolean; settings: BotSettings; error?: string }>(
+        "/api/settings",
+        payload
+      );
+      if (!r.ok) throw new Error(r.error ?? "No se pudieron guardar los parámetros.");
+      setValues({ ...(r.settings as unknown as Record<string, number | string>) });
+      push("Parámetros guardados.");
+    } catch (cause) {
+      push(cause instanceof Error ? cause.message : "No se pudieron guardar.", "danger");
+    } finally {
+      setSaving(false);
+    }
+  }
 
-      const tf = values.timeframe || "m15";
-
-      const r = await postJSON("/api/backtest", {
-        source: s.source,
-        timeframe: tf,
-        date_from: s.dateFrom,
-        date_to: s.dateTo,
-        equity: s.equity,
-        spread_pips: s.spread,
-        strategy: stratKey,
-        strategy_params: values,
-        risk_per_trade: s.riskPerTrade && !isNaN(s.riskPerTrade) ? s.riskPerTrade / 100 : undefined,
-        fixed_units: s.fixedUnits && !isNaN(s.fixedUnits) ? s.fixedUnits : 0,
+  async function activate(key: string) {
+    try {
+      const r = await postJSON<{ ok: boolean; error?: string }>("/api/settings", {
+        active_strategy: key,
       });
+      if (!r.ok) throw new Error(r.error ?? "No se pudo activar la estrategia.");
+      await refreshStatus();
+      push(`${STRATEGIES.find((s) => s.key === key)?.name} es ahora la estrategia activa.`);
+    } catch (cause) {
+      push(cause instanceof Error ? cause.message : "No se pudo activar.", "danger");
+    }
+  }
 
-      if (!r.ok) {
-        setBtMsgs(prev => ({ ...prev, [stratKey]: { text: "Error: " + r.error, cls: "err" } }));
-        setRunningStrategy(null);
-        return;
+  async function runSimulation() {
+    setRunning(selected);
+    setRunNote("Preparando datos…");
+    try {
+      if (sim.source === "csv" && sim.file) {
+        setRunNote("Subiendo CSV…");
+        const body = new FormData();
+        body.append("file", sim.file);
+        const up = await (await apiFetch("/api/backtest/csv", { method: "POST", body })).json();
+        if (!up.ok) throw new Error(`No se pudo subir el CSV: ${up.error}`);
       }
-    } catch (e: any) {
-      setBtMsgs(prev => ({ ...prev, [stratKey]: { text: "Error: " + e.message, cls: "err" } }));
-      setRunningStrategy(null);
+      const r = await postJSON<{ ok: boolean; error?: string }>("/api/backtest", {
+        source: sim.source,
+        timeframe: values.timeframe || "m15",
+        date_from: sim.dateFrom,
+        date_to: sim.dateTo,
+        equity: sim.equity,
+        spread_pips: sim.spread,
+        strategy: selected,
+        strategy_params: values,
+        risk_per_trade: sim.riskPerTrade ? sim.riskPerTrade / 100 : undefined,
+        fixed_units: sim.fixedUnits || 0,
+      });
+      if (!r.ok) throw new Error(r.error ?? "No se pudo lanzar la simulación.");
+    } catch (cause) {
+      push(cause instanceof Error ? cause.message : "No se pudo lanzar la simulación.", "danger");
+      setRunning(null);
+      setRunNote("");
     }
   }
 
-  // Renderizador de formulario de backtest
-  function renderBacktestForm(stratKey: string) {
-    const s = btSettings[stratKey];
-    if (!s) return null;
-    const setSetting = (key: string, val: any) => {
-      setBtSettings(prev => ({
-        ...prev,
-        [stratKey]: { ...prev[stratKey], [key]: val }
-      }));
-    };
-    const isBtRunning = runningStrategy === stratKey;
-
-    const selectStyle = {
-      background: "var(--card2)",
-      border: "1px solid var(--border)",
-      borderRadius: "8px",
-      color: "var(--text)",
-      fontSize: "14px",
-      fontWeight: "600",
-      padding: "11px 12px",
-      outline: "none",
-      marginTop: "7px",
-      width: "100%"
-    };
-
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginTop: "16px", borderTop: "1px solid var(--border)", paddingTop: "16px" }}>
-        <h4 style={{ fontSize: "12px", fontWeight: "bold", color: "var(--text-muted)", letterSpacing: "1px" }}>
-          ≋ AJUSTES DE SIMULACIÓN (BACKTESTING)
-        </h4>
-        <div className="form-grid responsive-two-col">
-          <label className="span-two">
-            FUENTE DE DATOS
-            <select 
-              value={s.source} 
-              onChange={(e) => setSetting("source", e.target.value)}
-              style={selectStyle}
-            >
-              <option value="fxcm" disabled={simulated}>FXCM histórico (real)</option>
-              <option value="synthetic">Sintético (prueba)</option>
-              <option value="csv">CSV subido</option>
-            </select>
-          </label>
-          <label>
-            DESDE
-            <input type="date" value={s.dateFrom} max={s.dateTo} onChange={(e) => setSetting("dateFrom", e.target.value)} />
-          </label>
-          <label>
-            HASTA
-            <input type="date" value={s.dateTo} min={s.dateFrom} max={isoDay(new Date())} onChange={(e) => setSetting("dateTo", e.target.value)} />
-          </label>
-          <label>
-            EQUITY INICIAL ($)
-            <input type="number" min={100} step={100} value={s.equity} onChange={(e) => setSetting("equity", +e.target.value)} />
-          </label>
-          <label>
-            SPREAD (PIPS)
-            <input type="number" min={0} max={10} step={0.1} value={s.spread} onChange={(e) => setSetting("spread", +e.target.value)} />
-          </label>
-          <label>
-            RIESGO POR OPERACIÓN (%)
-            <input 
-              type="number" 
-              min={0.1} 
-              max={10} 
-              step={0.1} 
-              value={s.riskPerTrade} 
-              onChange={(e) => setSetting("riskPerTrade", +e.target.value)} 
-              disabled={s.fixedUnits > 0}
-            />
-          </label>
-          <label>
-            UNIDADES FIJAS (0 = AUTO)
-            <input 
-              type="number" 
-              min={0} 
-              step={1000} 
-              value={s.fixedUnits} 
-              onChange={(e) => setSetting("fixedUnits", +e.target.value)} 
-            />
-          </label>
-          {s.source === "csv" && (
-            <label className="span-two">
-              CSV FILE
-              <input
-                type="file"
-                accept=".csv"
-                onChange={(e) => setSetting("file", e.target.files?.[0] ?? null)}
-              />
-            </label>
-          )}
-        </div>
-        <button
-          className="btn btn-start bt-run"
-          disabled={runningStrategy !== null}
-          onClick={() => runBacktestFor(stratKey)}
-          style={{ marginTop: "8px", width: "100%" }}
-        >
-          {isBtRunning ? "EJECUTANDO SIMULACIÓN…" : "EJECUTAR BACKTEST"}
-        </button>
-        {btMsgs[stratKey] && (
-          <div className={`manual-msg ${btMsgs[stratKey]?.cls ?? ""}`} style={{ marginTop: "8px" }}>
-            {btMsgs[stratKey]?.text}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // Renderizador de resultados de backtest
-  function renderBacktestResults(stratKey: string) {
-    const st = btResults[stratKey];
-    const s = st?.summary;
-    const isBtRunning = runningStrategy === stratKey;
-
-    if (isBtRunning) {
-      return (
-        <div style={{ display: "flex", flexDirection: "column", height: "100%", justifyContent: "center", alignItems: "center", minHeight: "250px" }}>
-          <div className="spinner" style={{ marginBottom: "16px" }}></div>
-          <span style={{ fontSize: "13px", fontWeight: "600", color: "var(--text-muted)" }}>
-            Simulando estrategia...
-          </span>
-        </div>
-      );
-    }
-
-    if (!st || !s) {
-      return (
-        <div style={{ display: "flex", flexDirection: "column", height: "100%", justifyContent: "center", alignItems: "center", minHeight: "250px", border: "1px dashed var(--border)", borderRadius: "8px", padding: "24px", textAlign: "center" }}>
-          <span style={{ fontSize: "32px", marginBottom: "8px" }}>≋</span>
-          <span style={{ fontSize: "13px", fontWeight: "600", color: "var(--text)" }}>
-            Sin Simulación Reciente
-          </span>
-          <span style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "6px", maxWidth: "250px" }}>
-            Configure los parámetros a la izquierda y presione "Ejecutar Backtest" para ver el rendimiento histórico de esta estrategia.
-          </span>
-        </div>
-      );
-    }
-
-    const pfInf = s.profit_factor == null && s.trades > 0 && s.net_profit > 0;
-    const pfText = pfInf ? "∞" : s.profit_factor == null ? "—" : fmt(s.profit_factor);
-
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-        <h4 style={{ fontSize: "12px", fontWeight: "bold", color: "var(--text-muted)", letterSpacing: "1px" }}>
-          📊 RENDIMIENTO DE LA SIMULACIÓN
-        </h4>
-
-        {st.synthetic ? (
-          <div className="bt-banner warn" style={{ padding: "8px 12px", fontSize: "11px", borderRadius: "6px", margin: 0 }}>
-            ⚠ DATOS SINTÉTICOS — solo para pruebas del pipeline.
-          </div>
-        ) : s.trades === 0 ? (
-          <div className="bt-banner warn" style={{ padding: "8px 12px", fontSize: "11px", borderRadius: "6px", margin: 0 }}>
-            Sin operaciones en el período probado.
-          </div>
-        ) : pfInf || (s.profit_factor ?? 0) >= 1 ? (
-          <div className="bt-banner good" style={{ padding: "8px 12px", fontSize: "11px", borderRadius: "6px", margin: 0 }}>
-            ✓ EXPECTATIVA POSITIVA (PF {pfText}).
-          </div>
-        ) : (
-          <div className="bt-banner bad" style={{ padding: "8px 12px", fontSize: "11px", borderRadius: "6px", margin: 0 }}>
-            ✗ EXPECTATIVA NEGATIVA (PF {pfText}).
-          </div>
-        )}
-
-        <div className="metric-row inner" style={{ gap: "8px", margin: 0, padding: 0 }}>
-          <Metric label="NET PROFIT" val={sign(s.net_profit)} tone={s.net_profit} />
-          <Metric label="RETORNO" val={sign(s.return_pct, "%")} tone={s.return_pct} />
-          <Metric label="WIN RATE" val={fmt(s.win_rate_pct, 1) + "%"} />
-          <Metric label="PROFIT FACTOR" val={pfText} tone={pfInf ? 1 : s.profit_factor == null ? undefined : s.profit_factor - 1} />
-        </div>
-        <div className="metric-row inner" style={{ gap: "8px", margin: 0, padding: 0 }}>
-          <Metric label="MAX DD" val={fmt(s.max_drawdown_pct, 1) + "%"} tone={s.max_drawdown_pct + 5} />
-          <Metric label="TRADES" val={String(s.trades)} />
-          <Metric label="PIPS NETOS" val={fmt(s.total_pips, 1)} tone={s.total_pips} />
-          <Metric label="AVG TRADE" val={sign(s.avg_trade)} tone={s.avg_trade} />
-        </div>
-
-        <div className="card mb" style={{ padding: "12px", minHeight: "190px", marginBottom: 0 }}>
-          <div className="card-head" style={{ paddingBottom: "4px", marginBottom: "4px" }}>
-            <div className="card-title" style={{ fontSize: "10px" }}>∿ CURVA DE BALANCE (EQUITY)</div>
-          </div>
-          <div style={{ height: "140px", width: "100%" }}>
-            <AreaChart data={st.equity ?? []} color="#4ade80" fit />
-          </div>
-        </div>
-
-        <div style={{ display: "flex", justifyContent: "flex-end" }}>
-          <button
-            className="link-btn"
-            onClick={() => setShowTrades(prev => ({ ...prev, [stratKey]: !prev[stratKey] }))}
-            style={{ fontSize: "12px", color: "var(--primary)", fontWeight: "600" }}
-            aria-expanded={Boolean(showTrades[stratKey])}
-          >
-            {showTrades[stratKey] ? "▲ Ocultar Trades de la Simulación" : "▼ Mostrar Trades de la Simulación"}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // Renderizador de listado de transacciones
-  function renderBacktestTradesTable(stratKey: string) {
-    const st = btResults[stratKey];
-    if (!st || !showTrades[stratKey] || runningStrategy === stratKey) return null;
-
-    return (
-      <div className="card" style={{ marginTop: "16px", padding: "16px" }}>
-        <div className="card-head" style={{ paddingBottom: "12px" }}>
-          <div className="card-title">⟲ TRADES DEL BACKTEST (ÚLTIMOS 500)</div>
-        </div>
-        <div className="table-wrap">
+  return (
+    <div className="stack">
+      {/* ---------------- comparación ---------------- */}
+      <Panel
+        label="Las cuatro estrategias"
+        bleed
+        caption="Cada fila resume la última simulación que se lanzó desde aquí. FSRPPO no se simula en esta página: sus resultados fuera de muestra se miden al entrenar y se comparan en Modelos."
+      >
+        <TableFrame>
           <table>
             <thead>
               <tr>
-                <th>DIR</th><th>UNIDADES</th><th>ENTRADA</th><th>SALIDA</th>
-                <th>PIPS</th><th>P&L</th><th>MOTIVO</th><th>FECHA</th>
+                <th>Estrategia</th>
+                <th>Estado</th>
+                <th className="num">Operaciones</th>
+                <th className="num">Retorno</th>
+                <th className="num">Profit factor</th>
+                <th className="num">Caída máx.</th>
+                <th>Acción</th>
               </tr>
             </thead>
             <tbody>
-              {(st.trades ?? []).slice().reverse().map((t, i) => (
-                <tr key={i}>
-                  <td className={t.side === "long" ? "dir-long" : "dir-short"}>
-                    {t.side === "long" ? "▲ BUY" : "▼ SELL"}
-                  </td>
-                  <td>{fmt(t.units, 0)}</td>
-                  <td>{fmtPx(t.entry)}</td>
-                  <td>{fmtPx(t.exit)}</td>
-                  <td className={(t.pnl ?? 0) >= 0 ? "pos" : "neg"}>{fmt(t.pips, 1)}</td>
-                  <td className={(t.pnl ?? 0) >= 0 ? "pos" : "neg"}>{sign(t.pnl)}</td>
-                  <td>{(t.reason ?? "—").toUpperCase()}</td>
-                  <td>{isoShort(t.exit_time)}</td>
-                </tr>
-              ))}
+              {STRATEGIES.map((item) => {
+                const summary = results[item.key]?.summary;
+                const isActive = activeStrategy === item.key;
+                return (
+                  <tr key={item.key} className={isActive ? "is-marked" : undefined}>
+                    <td>
+                      <div style={{ fontWeight: 600 }}>{item.name}</div>
+                      <div style={{ color: "var(--ink-3)", fontSize: "var(--fs-2xs)" }}>
+                        {item.premise}
+                      </div>
+                    </td>
+                    <td>{isActive ? <Mark tone="ok" dot>Activa</Mark> : <span className="muted">En reserva</span>}</td>
+                    <td className="num">{summary ? summary.trades : "—"}</td>
+                    <td className={`num ${summary && summary.return_pct >= 0 ? "pos" : summary ? "neg" : ""}`}>
+                      {summary ? sign(summary.return_pct, "%") : "—"}
+                    </td>
+                    <td className="num">
+                      {summary
+                        ? summary.profit_factor == null
+                          ? summary.net_profit > 0 && summary.trades > 0
+                            ? "∞"
+                            : "—"
+                          : fmt(summary.profit_factor)
+                        : "—"}
+                    </td>
+                    <td className="num">{summary ? `${fmt(summary.max_drawdown_pct, 1)}%` : "—"}</td>
+                    <td>
+                      {item.key === "fsrppo" ? (
+                        <Link href="/models">Ver modelos</Link>
+                      ) : isActive ? (
+                        <button className="btn" onClick={() => setSelected(item.key)}>
+                          Configurar
+                        </button>
+                      ) : (
+                        <button className="btn" onClick={() => activate(item.key)}>
+                          Activar
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
-        </div>
-      </div>
-    );
-  }
+        </TableFrame>
+      </Panel>
 
-  const selectTimeframe = (
-    <label>
-      TEMPORALIDAD (TIMEFRAME)
-      <select
-        value={values.timeframe ?? "m15"}
-        onChange={(e) => setValues({ ...values, timeframe: e.target.value })}
-        style={{
-          background: "var(--card2)",
-          border: "1px solid var(--border)",
-          borderRadius: "8px",
-          color: "var(--text)",
-          fontSize: "14px",
-          fontWeight: "600",
-          padding: "11px 12px",
-          outline: "none",
-          marginTop: "7px"
-        }}
-      >
-        <option value="m5">M5 — 5 minutos</option>
-        <option value="m15">M15 — 15 minutos</option>
-        <option value="m30">M30 — 30 minutos</option>
-        <option value="h1">H1 — 1 hora</option>
-        <option value="h4">H4 — 4 horas</option>
-      </select>
-    </label>
-  );
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
-      
-      {/* SECCIÓN CONFIGURACIÓN */}
-      <div>
-        <h2 style={{ fontSize: "14px", fontWeight: "bold", marginBottom: "16px", color: "var(--text-muted)", letterSpacing: "1px" }}>
-          ⚙ ESTRATEGIAS DE TRADING Y SIMULACIÓN
-        </h2>
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          
-          {/* BOLLINGER STRATEGY CARD */}
-          <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-            <button
-              type="button"
-              className="accordion-header" 
-              onClick={() => toggleExpand("bollinger")}
-              aria-expanded={expanded === "bollinger"}
-              aria-controls="bollinger-panel"
-              style={{ background: "var(--card)", padding: "20px 24px" }}
-            >
-              <div className="strategy-title-row">
-                <span className="strategy-name" style={{ fontSize: "16px" }}>Reversión a la Media (Bandas de Bollinger)</span>
-                {activeStrategy === "bollinger" && <span className="chip ok ml">ACTIVA</span>}
-              </div>
-              <span className="arrow" style={{ fontSize: "14px" }}>{expanded === "bollinger" ? "▲" : "▼"}</span>
-            </button>
-            
-            {expanded === "bollinger" && (
-              <div id="bollinger-panel" className="accordion-content" style={{ padding: "24px", background: "var(--card)" }}>
-                <div className="strategy-split-grid">
-                  {/* Izquierda: Ajustes */}
-                  <div>
-                    <h4 style={{ fontSize: "12px", fontWeight: "bold", color: "var(--text-muted)", letterSpacing: "1px", marginBottom: "12px" }}>
-                      ⚙ AJUSTES DE LA ESTRATEGIA
-                    </h4>
-                    <div className="form-grid responsive-two-col">
-                      {selectTimeframe}
-                      <label>
-                        PERÍODO BOLLINGER
-                        <input
-                          type="number"
-                          min={10}
-                          max={50}
-                          value={values.bb_period ?? ""}
-                          onChange={(e) => setValues({ ...values, bb_period: +e.target.value })}
-                        />
-                      </label>
-                      <label>
-                        DESVIACIÓN STD
-                        <input
-                          type="number"
-                          min={1}
-                          max={3}
-                          step={0.1}
-                          value={values.bb_std ?? ""}
-                          onChange={(e) => setValues({ ...values, bb_std: +e.target.value })}
-                        />
-                      </label>
-                      <label>
-                        PERÍODO ATR
-                        <input
-                          type="number"
-                          min={5}
-                          max={50}
-                          value={values.atr_period ?? ""}
-                          onChange={(e) => setValues({ ...values, atr_period: +e.target.value })}
-                        />
-                      </label>
-                      <label>
-                        MULT. STOP (×ATR)
-                        <input
-                          type="number"
-                          min={0.5}
-                          max={5}
-                          step={0.1}
-                          value={values.sl_atr_mult ?? ""}
-                          onChange={(e) => setValues({ ...values, sl_atr_mult: +e.target.value })}
-                        />
-                      </label>
-                      <label>
-                        ANCHO MÍN. BANDAS (PIPS)
-                        <input
-                          type="number"
-                          min={0}
-                          max={50}
-                          value={values.min_band_width_pips ?? ""}
-                          onChange={(e) => setValues({ ...values, min_band_width_pips: +e.target.value })}
-                        />
-                      </label>
-                    </div>
-                    {renderBacktestForm("bollinger")}
-                    <button className="btn btn-start" onClick={() => save("bollinger")} style={{ marginTop: "16px", width: "100%", background: "var(--border)", color: "var(--text)", border: "1px solid var(--border)" }}>
-                      GUARDAR AJUSTES
-                    </button>
-                  </div>
-
-                  {/* Derecha: Resultados del backtest */}
-                  <div>
-                    {renderBacktestResults("bollinger")}
-                  </div>
-                </div>
-                {renderBacktestTradesTable("bollinger")}
-              </div>
-            )}
-          </div>
-
-          {/* RSI STRATEGY CARD */}
-          <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-            <button
-              type="button"
-              className="accordion-header" 
-              onClick={() => toggleExpand("rsi")}
-              aria-expanded={expanded === "rsi"}
-              aria-controls="rsi-panel"
-              style={{ background: "var(--card)", padding: "20px 24px" }}
-            >
-              <div className="strategy-title-row">
-                <span className="strategy-name" style={{ fontSize: "16px" }}>Estrategia RSI (Relative Strength Index)</span>
-                {activeStrategy === "rsi" && <span className="chip ok ml">ACTIVA</span>}
-              </div>
-              <span className="arrow" style={{ fontSize: "14px" }}>{expanded === "rsi" ? "▲" : "▼"}</span>
-            </button>
-            
-            {expanded === "rsi" && (
-              <div id="rsi-panel" className="accordion-content" style={{ padding: "24px", background: "var(--card)" }}>
-                <div className="strategy-split-grid">
-                  {/* Izquierda: Ajustes */}
-                  <div>
-                    <h4 style={{ fontSize: "12px", fontWeight: "bold", color: "var(--text-muted)", letterSpacing: "1px", marginBottom: "12px" }}>
-                      ⚙ AJUSTES DE LA ESTRATEGIA
-                    </h4>
-                    <div className="form-grid responsive-two-col">
-                      {selectTimeframe}
-                      <label>
-                        PERÍODO RSI
-                        <input
-                          type="number"
-                          min={5}
-                          max={50}
-                          value={values.rsi_period ?? ""}
-                          onChange={(e) => setValues({ ...values, rsi_period: +e.target.value })}
-                        />
-                      </label>
-                      <label>
-                        LÍMITE SOBRECOMPRA
-                        <input
-                          type="number"
-                          min={50}
-                          max={90}
-                          value={values.rsi_overbought ?? ""}
-                          onChange={(e) => setValues({ ...values, rsi_overbought: +e.target.value })}
-                        />
-                      </label>
-                      <label>
-                        LÍMITE SOBREVENTA
-                        <input
-                          type="number"
-                          min={10}
-                          max={50}
-                          value={values.rsi_oversold ?? ""}
-                          onChange={(e) => setValues({ ...values, rsi_oversold: +e.target.value })}
-                        />
-                      </label>
-                      <label>
-                        PERÍODO ATR
-                        <input
-                          type="number"
-                          min={5}
-                          max={50}
-                          value={values.atr_period ?? ""}
-                          onChange={(e) => setValues({ ...values, atr_period: +e.target.value })}
-                        />
-                      </label>
-                      <label>
-                        MULT. STOP (×ATR)
-                        <input
-                          type="number"
-                          min={0.5}
-                          max={5}
-                          step={0.1}
-                          value={values.sl_atr_mult ?? ""}
-                          onChange={(e) => setValues({ ...values, sl_atr_mult: +e.target.value })}
-                        />
-                      </label>
-                    </div>
-                    {renderBacktestForm("rsi")}
-                    <button className="btn btn-start" onClick={() => save("rsi")} style={{ marginTop: "16px", width: "100%", background: "var(--border)", color: "var(--text)", border: "1px solid var(--border)" }}>
-                      GUARDAR AJUSTES
-                    </button>
-                  </div>
-
-                  {/* Derecha: Resultados del backtest */}
-                  <div>
-                    {renderBacktestResults("rsi")}
-                  </div>
-                </div>
-                {renderBacktestTradesTable("rsi")}
-              </div>
-            )}
-          </div>
-
-          {/* WYCKOFF STRATEGY CARD */}
-          <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-            <button
-              type="button"
-              className="accordion-header" 
-              onClick={() => toggleExpand("wyckoff_1")}
-              aria-expanded={expanded === "wyckoff_1"}
-              aria-controls="wyckoff-panel"
-              style={{ background: "var(--card)", padding: "20px 24px" }}
-            >
-              <div className="strategy-title-row">
-                <span className="strategy-name" style={{ fontSize: "16px" }}>Método Wyckoff 1 (Ruptura de Rango con Volumen)</span>
-                {activeStrategy === "wyckoff_1" && <span className="chip ok ml">ACTIVA</span>}
-              </div>
-              <span className="arrow" style={{ fontSize: "14px" }}>{expanded === "wyckoff_1" ? "▲" : "▼"}</span>
-            </button>
-            
-            {expanded === "wyckoff_1" && (
-              <div id="wyckoff-panel" className="accordion-content" style={{ padding: "24px", background: "var(--card)" }}>
-                <div className="strategy-split-grid">
-                  {/* Izquierda: Ajustes */}
-                  <div>
-                    <h4 style={{ fontSize: "12px", fontWeight: "bold", color: "var(--text-muted)", letterSpacing: "1px", marginBottom: "12px" }}>
-                      ⚙ AJUSTES DE LA ESTRATEGIA
-                    </h4>
-                    <div className="form-grid responsive-two-col">
-                      {selectTimeframe}
-                      <label>
-                        PERÍODO RANGO
-                        <input
-                          type="number"
-                          min={5}
-                          max={100}
-                          value={values.wyckoff_range_period ?? ""}
-                          onChange={(e) => setValues({ ...values, wyckoff_range_period: +e.target.value })}
-                        />
-                      </label>
-                      <label>
-                        CONFIRMACIÓN VOLUMEN (MULT)
-                        <input
-                          type="number"
-                          min={1.0}
-                          max={5.0}
-                          step={0.1}
-                          value={values.wyckoff_volume_mult ?? ""}
-                          onChange={(e) => setValues({ ...values, wyckoff_volume_mult: +e.target.value })}
-                        />
-                      </label>
-                      <label>
-                        MULT. PROVECHO (×RISK TO TP)
-                        <input
-                          type="number"
-                          min={0.5}
-                          max={10}
-                          step={0.1}
-                          value={values.wyckoff_tp_mult ?? ""}
-                          onChange={(e) => setValues({ ...values, wyckoff_tp_mult: +e.target.value })}
-                        />
-                      </label>
-                    </div>
-                    {renderBacktestForm("wyckoff_1")}
-                    <button className="btn btn-start" onClick={() => save("wyckoff_1")} style={{ marginTop: "16px", width: "100%", background: "var(--border)", color: "var(--text)", border: "1px solid var(--border)" }}>
-                      GUARDAR AJUSTES
-                    </button>
-                  </div>
-
-                  {/* Derecha: Resultados del backtest */}
-                  <div>
-                    {renderBacktestResults("wyckoff_1")}
-                  </div>
-                </div>
-                {renderBacktestTradesTable("wyckoff_1")}
-              </div>
-            )}
-          </div>
-
-        </div>
-
-        {msg && (
-          <div style={{ marginTop: 16, textAlign: "center" }}>
-            <span className={`hint${msg.ok ? " ok" : " err"}`}>{msg.text}</span>
-          </div>
-        )}
+      {/* ---------------- selección ---------------- */}
+      <div className="seg" role="tablist" aria-label="Estrategia a configurar">
+        {STRATEGIES.map((item) => (
+          <button
+            key={item.key}
+            role="tab"
+            type="button"
+            aria-selected={selected === item.key}
+            onClick={() => setSelected(item.key)}
+          >
+            {item.name.split(" —")[0].split(" (")[0]}
+          </button>
+        ))}
       </div>
 
+      {!spec.params ? (
+        <Panel label={spec.name}>
+          <Notice tone="info" title="FSRPPO no se configura aquí.">
+            Sus parámetros son los del entrenamiento (iteraciones, learning rate, entropía,
+            exposición máxima) y quedan fijados dentro de cada modelo.{" "}
+            <Link href="/train">Entrenar un modelo</Link> ·{" "}
+            <Link href="/models">Comparar y activar modelos</Link>
+          </Notice>
+        </Panel>
+      ) : (
+        <div className="plate halves">
+          <div className="stack">
+            <Panel
+              label="Parámetros"
+              actions={
+                activeStrategy === spec.key ? (
+                  <Mark tone="ok" dot>
+                    Activa
+                  </Mark>
+                ) : (
+                  <button className="btn quiet" onClick={() => activate(spec.key)}>
+                    Activar esta
+                  </button>
+                )
+              }
+              caption={spec.premise}
+            >
+              {!loaded ? (
+                <Skeleton height={30} count={5} />
+              ) : (
+                <>
+                  <div className="field-grid">
+                    <div className="field">
+                      <label className="field-label" htmlFor="tf">
+                        Temporalidad
+                      </label>
+                      <select
+                        id="tf"
+                        className="select"
+                        value={(values.timeframe as string) ?? "m15"}
+                        onChange={(e) => setValues({ ...values, timeframe: e.target.value })}
+                      >
+                        {TF_OPTIONS.map((t) => (
+                          <option key={t.value} value={t.value}>
+                            {t.label}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="field-note">Tamaño de vela con el que decide.</span>
+                    </div>
+                    {spec.params.map((field) => (
+                      <div className="field" key={String(field.key)}>
+                        <label className="field-label" htmlFor={String(field.key)}>
+                          {field.label}
+                        </label>
+                        <input
+                          id={String(field.key)}
+                          className="input"
+                          type="number"
+                          min={field.min}
+                          max={field.max}
+                          step={field.step ?? 1}
+                          value={(values[field.key] as number) ?? ""}
+                          onChange={(e) =>
+                            setValues({ ...values, [field.key]: +e.target.value })
+                          }
+                        />
+                        <span className="field-note">
+                          {field.note ? `${field.note} ` : ""}
+                          Entre {field.min} y {field.max}.
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ marginTop: "var(--s-5)" }}>
+                    <button className="btn primary" onClick={save} disabled={saving}>
+                      {saving ? "Guardando…" : "Guardar parámetros"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </Panel>
+
+            <Panel
+              label="Datos de la simulación"
+              caption="La simulación usa los parámetros de arriba tal y como están en el formulario, aunque no se hayan guardado."
+            >
+              <div className="field-grid">
+                <div className="field" style={{ gridColumn: "1 / -1" }}>
+                  <label className="field-label" htmlFor="sim-source">
+                    Fuente de datos
+                  </label>
+                  <select
+                    id="sim-source"
+                    className="select"
+                    value={sim.source}
+                    onChange={(e) => setSim({ ...sim, source: e.target.value })}
+                  >
+                    <option value="fxcm" disabled={simulated}>
+                      Histórico de FXCM
+                    </option>
+                    <option value="synthetic">Sintético (prueba del pipeline)</option>
+                    <option value="csv">CSV subido</option>
+                  </select>
+                  {simulated && (
+                    <span className="field-note">
+                      En modo simulado no hay sesión con el bróker: solo sintético o CSV.
+                    </span>
+                  )}
+                </div>
+                <div className="field">
+                  <label className="field-label" htmlFor="sim-from">
+                    Desde
+                  </label>
+                  <input
+                    id="sim-from"
+                    className="input"
+                    type="date"
+                    value={sim.dateFrom}
+                    max={sim.dateTo}
+                    onChange={(e) => setSim({ ...sim, dateFrom: e.target.value })}
+                  />
+                </div>
+                <div className="field">
+                  <label className="field-label" htmlFor="sim-to">
+                    Hasta
+                  </label>
+                  <input
+                    id="sim-to"
+                    className="input"
+                    type="date"
+                    value={sim.dateTo}
+                    min={sim.dateFrom}
+                    max={isoDay(new Date())}
+                    onChange={(e) => setSim({ ...sim, dateTo: e.target.value })}
+                  />
+                </div>
+                <div className="field">
+                  <label className="field-label" htmlFor="sim-equity">
+                    Capital inicial ($)
+                  </label>
+                  <input
+                    id="sim-equity"
+                    className="input"
+                    type="number"
+                    min={100}
+                    step={100}
+                    value={sim.equity}
+                    onChange={(e) => setSim({ ...sim, equity: +e.target.value })}
+                  />
+                </div>
+                <div className="field">
+                  <label className="field-label" htmlFor="sim-spread">
+                    Spread asumido (pips)
+                  </label>
+                  <input
+                    id="sim-spread"
+                    className="input"
+                    type="number"
+                    min={0}
+                    max={10}
+                    step={0.1}
+                    value={sim.spread}
+                    onChange={(e) => setSim({ ...sim, spread: +e.target.value })}
+                  />
+                </div>
+                <div className="field">
+                  <label className="field-label" htmlFor="sim-risk">
+                    Riesgo por operación (%)
+                  </label>
+                  <input
+                    id="sim-risk"
+                    className="input"
+                    type="number"
+                    min={0.1}
+                    max={10}
+                    step={0.1}
+                    value={sim.riskPerTrade}
+                    disabled={sim.fixedUnits > 0}
+                    onChange={(e) => setSim({ ...sim, riskPerTrade: +e.target.value })}
+                  />
+                  <span className="field-note">
+                    {sim.fixedUnits > 0 ? "Inerte: mandan las unidades fijas." : "Dimensiona cada orden."}
+                  </span>
+                </div>
+                <div className="field">
+                  <label className="field-label" htmlFor="sim-units">
+                    Unidades fijas
+                  </label>
+                  <input
+                    id="sim-units"
+                    className="input"
+                    type="number"
+                    min={0}
+                    step={1000}
+                    value={sim.fixedUnits}
+                    onChange={(e) => setSim({ ...sim, fixedUnits: +e.target.value })}
+                  />
+                  <span className="field-note">0 = tamaño automático por riesgo.</span>
+                </div>
+                {sim.source === "csv" && (
+                  <div className="field" style={{ gridColumn: "1 / -1" }}>
+                    <label className="field-label" htmlFor="sim-csv">
+                      Archivo CSV
+                    </label>
+                    <input
+                      id="sim-csv"
+                      className="input"
+                      type="file"
+                      accept=".csv"
+                      onChange={(e) => setSim({ ...sim, file: e.target.files?.[0] ?? null })}
+                    />
+                  </div>
+                )}
+              </div>
+              <div style={{ marginTop: "var(--s-5)" }}>
+                <button
+                  className="btn primary lg block"
+                  disabled={running !== null}
+                  onClick={runSimulation}
+                >
+                  {running ? "Simulando…" : "Ejecutar simulación"}
+                </button>
+                {runNote && (
+                  <p className="field-note" style={{ marginTop: "var(--s-2)" }} role="status">
+                    {runNote}
+                  </p>
+                )}
+              </div>
+            </Panel>
+          </div>
+
+          {/* ---------------- resultado ---------------- */}
+          <div className="stack">
+            <SimulationResult
+              state={result}
+              running={running === selected}
+              note={runNote}
+              showTrades={showTrades}
+              onToggleTrades={() => setShowTrades((v) => !v)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function Metric({ label, val, tone }: { label: string; val: string; tone?: number }) {
+function SimulationResult({
+  state,
+  running,
+  note,
+  showTrades,
+  onToggleTrades,
+}: {
+  state?: BacktestState;
+  running: boolean;
+  note: string;
+  showTrades: boolean;
+  onToggleTrades: () => void;
+}) {
+  if (running) {
+    return (
+      <Panel label="Resultado de la simulación">
+        <div style={{ display: "grid", gap: "var(--s-4)" }}>
+          <p className="field-note" role="status" aria-live="polite">
+            {note || "Ejecutando…"}
+          </p>
+          <Skeleton height={22} count={2} />
+          <Skeleton height={140} />
+        </div>
+      </Panel>
+    );
+  }
+
+  const summary = state?.summary;
+  if (!state || !summary) {
+    return (
+      <Panel label="Resultado de la simulación" bleed>
+        <EmptyState
+          title="Sin simulación todavía"
+          hint="Ajusta los datos de la izquierda y ejecuta la simulación para ver cómo se habría comportado esta estrategia sobre el período elegido."
+        />
+      </Panel>
+    );
+  }
+
+  const infinitePf = summary.profit_factor == null && summary.trades > 0 && summary.net_profit > 0;
+  const pf = infinitePf ? "∞" : summary.profit_factor == null ? "—" : fmt(summary.profit_factor);
+
   return (
-    <div className="metric-card" style={{ flex: 1, minWidth: "80px", padding: "8px" }}>
-      <div className="m-lbl" style={{ fontSize: "9px" }}>{label}</div>
-      <div className={`m-val${tone == null ? "" : tone >= 0 ? " pos" : " neg"}`} style={{ fontSize: "14px" }}>{val}</div>
-    </div>
+    <>
+      <Panel
+        label="Resultado de la simulación"
+        actions={
+          state.finished ? (
+            <span className="field-note">
+              {isoShort(state.finished)} UTC · {state.candles} velas
+            </span>
+          ) : undefined
+        }
+        caption={
+          state.period
+            ? `Período simulado: ${state.period.from} → ${state.period.to}, fuente ${state.source}.`
+            : undefined
+        }
+      >
+        <div style={{ display: "grid", gap: "var(--s-4)" }}>
+          {state.synthetic ? (
+            <Notice tone="warn" title="Datos sintéticos.">
+              Sirven para comprobar que el pipeline funciona, no para juzgar la estrategia.
+            </Notice>
+          ) : summary.trades === 0 ? (
+            <Notice tone="warn" title="Sin operaciones en el período.">
+              Los filtros de la estrategia no dieron ninguna entrada. Prueba a relajarlos o a
+              ampliar el rango de fechas.
+            </Notice>
+          ) : infinitePf || (summary.profit_factor ?? 0) >= 1 ? (
+            <Notice tone="ok" title={`Expectativa positiva (profit factor ${pf}).`}>
+              Sobre este período y con este spread. Un solo tramo no es evidencia.
+            </Notice>
+          ) : (
+            <Notice tone="danger" title={`Expectativa negativa (profit factor ${pf}).`}>
+              La estrategia habría perdido dinero en este período con estos parámetros.
+            </Notice>
+          )}
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+              gap: "var(--s-4)",
+            }}
+          >
+            <Readout label="Beneficio neto" value={sign(summary.net_profit)} tone={summary.net_profit >= 0 ? "pos" : "neg"} />
+            <Readout label="Retorno" value={sign(summary.return_pct, "%")} tone={summary.return_pct >= 0 ? "pos" : "neg"} />
+            <Readout label="Aciertos" value={`${fmt(summary.win_rate_pct, 1)}%`} />
+            <Readout label="Profit factor" value={pf} />
+            <Readout label="Caída máxima" value={`${fmt(summary.max_drawdown_pct, 1)}%`} tone={summary.max_drawdown_pct <= -5 ? "neg" : "none"} />
+            <Readout label="Operaciones" value={String(summary.trades)} />
+            <Readout label="Pips netos" value={fmt(summary.total_pips, 1)} tone={summary.total_pips >= 0 ? "pos" : "neg"} />
+            <Readout label="Media por operación" value={sign(summary.avg_trade)} tone={summary.avg_trade >= 0 ? "pos" : "neg"} />
+          </div>
+        </div>
+      </Panel>
+
+      <Panel label="Curva de capital simulada" bleed>
+        <div style={{ padding: "var(--s-2)" }}>
+          <AreaChart
+            data={state.equity ?? []}
+            tone={summary.net_profit >= 0 ? "long" : "short"}
+            fit
+            short
+            label="Curva de capital de la simulación"
+          />
+        </div>
+      </Panel>
+
+      <Panel
+        label="Operaciones de la simulación"
+        count={state.trades?.length ?? 0}
+        actions={
+          <button className="btn quiet" onClick={onToggleTrades} aria-expanded={showTrades}>
+            <Icon name={showTrades ? "close" : "compare"} size={13} />
+            {showTrades ? "Ocultar" : "Mostrar"}
+          </button>
+        }
+        bleed={showTrades}
+      >
+        {showTrades ? (
+          <TableFrame maxHeight={420}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Dirección</th>
+                  <th className="num">Unidades</th>
+                  <th className="num">Entrada</th>
+                  <th className="num">Salida</th>
+                  <th className="num">Pips</th>
+                  <th className="num">P&L</th>
+                  <th>Motivo</th>
+                  <th>Fecha</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(state.trades ?? [])
+                  .slice()
+                  .reverse()
+                  .map((t, i) => (
+                    <tr key={i}>
+                      <td className={t.side === "long" ? "pos" : "neg"}>
+                        {t.side === "long" ? "Compra" : "Venta"}
+                      </td>
+                      <td className="num">{fmt(t.units, 0)}</td>
+                      <td className="num">{fmtPx(t.entry)}</td>
+                      <td className="num">{fmtPx(t.exit)}</td>
+                      <td className={`num ${(t.pnl ?? 0) >= 0 ? "pos" : "neg"}`}>{fmt(t.pips, 1)}</td>
+                      <td className={`num ${(t.pnl ?? 0) >= 0 ? "pos" : "neg"}`}>{sign(t.pnl)}</td>
+                      <td>{t.reason ?? "—"}</td>
+                      <td>{isoShort(t.exit_time)}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </TableFrame>
+        ) : (
+          <p className="field-note">
+            Las {state.trades?.length ?? 0} operaciones que produjo esta simulación, con su motivo
+            de cierre.
+          </p>
+        )}
+      </Panel>
+    </>
   );
 }

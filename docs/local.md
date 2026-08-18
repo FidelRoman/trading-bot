@@ -68,28 +68,40 @@ permite operar aunque el modelo o la estrategia no estén validados.
   proceso esté vivo.
 - `--proxy-headers` es lo que hace que el backend vea el esquema y la IP reales
   cuando llega a través del túnel.
-- Sin `--host`, uvicorn escucha solo en `127.0.0.1`. **Déjalo así**: como no hay
-  autenticación, `--host 0.0.0.0` abre la cuenta y las órdenes a toda la wifi.
-  Para entrar desde otro dispositivo, usa Tailscale (§4).
+- Sin `--host`, uvicorn escucha solo en `127.0.0.1`. Con `--host 0.0.0.0` acepta
+  también conexiones de la tailnet y de la wifi local (§4).
 - `MOCK=1` delante del comando arranca en modo simulado, sin credenciales.
 
 Abre <http://localhost:8000> y el panel carga.
 
 ## 4. Acceso desde otro dispositivo: Tailscale
 
-Con el backend escuchando solo en `127.0.0.1`, `tailscale serve` lo publica
-dentro de tu tailnet —tus dispositivos y nadie más— sin abrir el puerto a la red
-local ni a Internet:
-
 ```bash
-tailscale serve --bg 8000      # publica https://<máquina>.<tailnet>.ts.net/
-tailscale serve status         # ver qué hay publicado
-tailscale serve --https=443 off  # dejar de publicarlo
+caffeinate -s uv run uvicorn tradingbot.web.app:app --host 0.0.0.0 --port 8000 \
+  --proxy-headers --forwarded-allow-ips="*"
 ```
 
-Requiere tener activados los certificados HTTPS del tailnet (panel de Tailscale →
-DNS → HTTPS Certificates). El WebSocket viaja por el mismo origen y el frontend
-conmuta solo a `wss://` al ver HTTPS, así que no hay nada más que configurar.
+Desde cualquier dispositivo con Tailscale conectado, `http://<ip-tailscale>:8000`
+—o `http://<máquina>.<tailnet>.ts.net:8000` con MagicDNS activado—. La IP y el
+nombre salen de:
+
+```bash
+tailscale status --self --peers=false
+```
+
+Como el backend no autentica, `0.0.0.0` deja el panel y las órdenes al alcance de
+cualquiera **en la wifi local**, no solo de la tailnet. Dos formas de cerrar esa
+mitad:
+
+- `--host <ip-tailscale>` escucha únicamente en la interfaz de Tailscale, a
+  cambio de perder el acceso por `localhost`.
+- `tailscale serve --bg 8000` con uvicorn en `127.0.0.1`: publica
+  `https://<máquina>.<tailnet>.ts.net/` solo para tus dispositivos, sin abrir
+  ningún puerto. Requiere activar los certificados HTTPS del tailnet (panel de
+  Tailscale → DNS → HTTPS Certificates).
+
+En los tres casos el WebSocket viaja por el mismo origen y el frontend conmuta
+solo a `wss://` cuando la página es HTTPS: no hay nada más que configurar.
 
 ### Alternativa: Cloudflare Tunnel (público)
 

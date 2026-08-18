@@ -1,0 +1,190 @@
+/* ===========================================================================
+   LA LÁMINA — sistema de diseño de FSRPPO·BOT
+   ---------------------------------------------------------------------------
+   La interfaz es la lámina viva del paper que este bot implementa. La gramática
+   es la de una figura de publicación: filetes de 1px, paneles rotulados, pies
+   explicativos, ejes con su lectura, cifras tabulares. La elevación se declara
+   una sola vez y siempre con filete, nunca con sombra.
+
+   Dos soportes para la misma lámina:
+     · claro  = la lámina impresa en papel
+     · oscuro = la misma lámina en la pantalla del instrumento
+
+   El TERRITORIO lo lleva el fondo de la página entera, nunca una insignia:
+   simulado, demo y real tiñen el papel. Es la única señal de la interfaz que no
+   puede perderse en ningún ancho.
+   =========================================================================== */
+
+:root {
+  /* --- soporte: papel ---------------------------------------------------- */
+  --ground: #efece4;
+  --ground-demo: #e6ebf3;
+  --ground-real: #f7e3df;
+  --panel: #f8f6f1;
+  --panel-inset: #e9e5db;
+  --panel-hover: #f1eee7;
+
+  /* --- tinta -------------------------------------------------------------
+     La tinta terciaria carga rótulos de eje, pies y cabeceras de tabla a 11-13px:
+     tiene que pasar de 4,5:1 sobre el papel y sobre el panel, no solo insinuarse. */
+  --ink: #14171a;
+  --ink-2: #45494f;
+  --ink-3: #5f646a;
+  --ink-invert: #f8f6f1;
+
+  /* --- filetes ----------------------------------------------------------- */
+  --rule: #cbc5b8;
+  --rule-strong: #a9a296;
+  --rule-faint: #ded8cc;
+
+  /* --- tintas de señal (solo señal, nunca decoración) -------------------- */
+  --long: #0a6b4a;
+  --long-wash: rgba(10, 107, 74, 0.1);
+  --short: #ae2a20;
+  --short-wash: rgba(174, 42, 32, 0.1);
+  --warn: #8a5a00;
+  --warn-wash: rgba(138, 90, 0, 0.11);
+  --accent: #1f4fa8;
+  --accent-wash: rgba(31, 79, 168, 0.1);
+  --accent-ink: #f8f6f1;
+
+  /* --- trazo de la figura ------------------------------------------------ */
+  --plot-grid: rgba(20, 23, 26, 0.08);
+  --plot-axis: rgba(20, 23, 26, 0.24);
+  --plot-crosshair: rgba(31, 79, 168, 0.45);
+
+  /* --- retícula: una sola unidad de 4px, sin medios valores -------------- */
+  --u: 4px;
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+  --s-12: 48px;
+  --s-16: 64px;
+
+  /* --- escala tipográfica fija (Operate: rem, ratio corto) --------------- */
+  --fs-eje: 0.6875rem; /* 11px — rótulo de eje, pie mínimo */
+  --fs-2xs: 0.75rem; /* 12px */
+  --fs-xs: 0.8125rem; /* 13px — tabla, UI densa */
+  --fs-sm: 0.875rem; /* 14px — cuerpo */
+  --fs-md: 1rem; /* 16px */
+  --fs-lg: 1.1875rem; /* 19px */
+  --fs-xl: 1.4375rem; /* 23px */
+  --fs-2xl: 1.75rem; /* 28px */
+  --fs-3xl: 2.5rem; /* 40px — titular de lámina: el precio vivo */
+
+  --lh-tight: 1.2;
+  --lh-snug: 1.4;
+  --lh-body: 1.6;
+
+  --tracking-eje: 0.06em; /* solo rótulos de eje, nunca prosa ni titulares */
+
+  /* --- densidad: compacta en puntero fino, táctil en puntero grueso ------ */
+  --control-h: 30px;
+  --control-h-lg: 36px;
+  --hit: 30px;
+
+  /* --- radios: la lámina no tiene esquinas redondeadas ------------------- */
+  --radius: 0px;
+  --radius-control: 0px;
+
+  /* --- movimiento: estado, nunca coreografía ---------------------------- */
+  --ease: cubic-bezier(0.2, 0.8, 0.3, 1);
+  --dur-1: 120ms;
+  --dur-2: 180ms;
+
+  color-scheme: light;
+}
+
+/* --- la misma lámina en la pantalla del instrumento ----------------------- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #0b0d0f;
+    --ground-demo: #08111f;
+    --ground-real: #220b0b;
+    --panel: #121517;
+    --panel-inset: #191d20;
+    --panel-hover: #171b1e;
+
+    --ink: #e9e6de;
+    --ink-2: #a8adb3;
+    --ink-3: #8a9098;
+    --ink-invert: #0b0d0f;
+
+    --rule: #272c31;
+    --rule-strong: #3a4046;
+    --rule-faint: #1c2023;
+
+    --long: #3fce8c;
+    --long-wash: rgba(63, 206, 140, 0.12);
+    --short: #ff6f62;
+    --short-wash: rgba(255, 111, 98, 0.12);
+    --warn: #f0b429;
+    --warn-wash: rgba(240, 180, 41, 0.12);
+    --accent: #86a9f2;
+    --accent-wash: rgba(134, 169, 242, 0.13);
+    --accent-ink: #0b0d0f;
+
+    --plot-grid: rgba(233, 230, 222, 0.07);
+    --plot-axis: rgba(233, 230, 222, 0.2);
+    --plot-crosshair: rgba(134, 169, 242, 0.5);
+
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground: #0b0d0f;
+  --ground-demo: #08111f;
+  --ground-real: #220b0b;
+  --panel: #121517;
+  --panel-inset: #191d20;
+  --panel-hover: #171b1e;
+
+  --ink: #e9e6de;
+  --ink-2: #a8adb3;
+  --ink-3: #8a9098;
+  --ink-invert: #0b0d0f;
+
+  --rule: #272c31;
+  --rule-strong: #3a4046;
+  --rule-faint: #1c2023;
+
+  --long: #3fce8c;
+  --long-wash: rgba(63, 206, 140, 0.12);
+  --short: #ff6f62;
+  --short-wash: rgba(255, 111, 98, 0.12);
+  --warn: #f0b429;
+  --warn-wash: rgba(240, 180, 41, 0.12);
+  --accent: #86a9f2;
+  --accent-wash: rgba(134, 169, 242, 0.13);
+  --accent-ink: #0b0d0f;
+
+  --plot-grid: rgba(233, 230, 222, 0.07);
+  --plot-axis: rgba(233, 230, 222, 0.2);
+  --plot-crosshair: rgba(134, 169, 242, 0.5);
+
+  color-scheme: dark;
+}
+
+/* --- territorio: el papel dice en qué cuenta estás ------------------------ */
+:root[data-account="demo"] {
+  --ground: var(--ground-demo);
+}
+:root[data-account="real"] {
+  --ground: var(--ground-real);
+  --rule: var(--rule-strong);
+}
+
+/* --- puntero grueso: los objetivos crecen, la lámina no cambia ----------- */
+@media (pointer: coarse) {
+  :root {
+    --control-h: 44px;
+    --control-h-lg: 48px;
+    --hit: 44px;
+  }
+}

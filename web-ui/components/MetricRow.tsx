@@ -1,42 +1,48 @@
 "use client";
+/* Las lecturas de cuenta, en una sola línea base bajo la banda. Están en todas
+   las rutas: antes se ocultaban en tres de las ocho con una lista escrita a
+   mano, y el marco de la app cambiaba sin motivo perceptible. */
 
-import { fmt, money, sign } from "@/lib/format";
+import Readout, { ReadoutRow } from "./ui/Readout";
+import { fmt, money, sign, signedMoney } from "@/lib/format";
 import { useLive } from "@/lib/live";
 
 export default function MetricRow() {
   const { status } = useLive();
-  const eq = status?.account?.equity;
+  const loading = !status;
+  const equity = status?.account?.equity;
   const usable = status?.account?.usable_margin;
   const dayPct = status?.daily_pl_pct ?? 0;
   const dayAbs = status?.daily_pl_abs ?? 0;
-  const dd = status?.max_drawdown_pct ?? 0;
+  const drawdown = status?.max_drawdown_pct ?? 0;
 
   return (
-    <div className="metric-row">
-      <div className="metric-card">
-        <div className="m-lbl">CAPITAL TOTAL</div>
-        <div className="m-val">{money(eq)}</div>
-        <div className={`m-sub ${dayPct >= 0 ? "pos" : "neg"}`}>{sign(dayPct, "% hoy")}</div>
-      </div>
-      <div className="metric-card">
-        <div className="m-lbl">MARGEN LIBRE</div>
-        <div className="m-val">{money(usable)}</div>
-        <div className="m-sub">{eq && usable != null ? fmt((usable / eq) * 100, 1) + "% del equity" : "—"}</div>
-      </div>
-      <div className="metric-card">
-        <div className="m-lbl">P&amp;L DEL DÍA</div>
-        <div className={`m-val ${dayAbs >= 0 ? "pos" : "neg"}`}>
-          {dayAbs >= 0 ? "+" : "-"}${fmt(Math.abs(dayAbs))}
-        </div>
-        <div className="m-sub">
-          Trades hoy: {status ? `${status.trades_today} / ${status.max_trades_per_day}` : "—"}
-        </div>
-      </div>
-      <div className="metric-card">
-        <div className="m-lbl">CAÍDA MÁXIMA</div>
-        <div className={`m-val ${dd <= -5 ? "neg" : dd < 0 ? "" : "pos"}`}>{fmt(dd, 1)}%</div>
-        <div className="m-sub">Objetivo: &lt; 5%</div>
-      </div>
-    </div>
+    <ReadoutRow chrome>
+      <Readout label="Capital total" value={money(equity)} loading={loading} note={
+        loading ? undefined : (
+          <span className={dayPct >= 0 ? "pos" : "neg"}>{sign(dayPct, "% hoy")}</span>
+        )
+      } />
+      <Readout
+        label="Margen libre"
+        value={money(usable)}
+        loading={loading}
+        note={equity && usable != null ? `${fmt((usable / equity) * 100, 1)}% del capital` : "—"}
+      />
+      <Readout
+        label="P&L del día"
+        value={signedMoney(dayAbs)}
+        tone={dayAbs > 0 ? "pos" : dayAbs < 0 ? "neg" : "none"}
+        loading={loading}
+        note={status ? `${status.trades_today} de ${status.max_trades_per_day} operaciones` : "—"}
+      />
+      <Readout
+        label="Caída máxima"
+        value={`${fmt(drawdown, 1)}%`}
+        tone={drawdown <= -5 ? "neg" : "none"}
+        loading={loading}
+        note="Objetivo: por encima de −5%"
+      />
+    </ReadoutRow>
   );
 }

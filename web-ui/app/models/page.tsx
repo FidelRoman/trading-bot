@@ -5,18 +5,24 @@
    Buy & Hold del mismo tramo de test para que ninguna cifra se lea sin contexto. */
 
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { apiFetch, getJSON, postJSON } from "@/lib/api";
+import Link from "next/link";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { MetricsHead, MetricsRow } from "@/components/metrics";
 import TrainingParams from "@/components/TrainingParams";
+import EmptyState from "@/components/ui/EmptyState";
+import Icon from "@/components/ui/Icon";
+import Mark from "@/components/ui/Mark";
+import Notice from "@/components/ui/Notice";
+import { Panel } from "@/components/ui/Panel";
+import Readout, { ReadoutRow } from "@/components/ui/Readout";
+import Skeleton from "@/components/ui/Skeleton";
+import Tabs from "@/components/ui/Tabs";
+import { TableFrame } from "@/components/ui/Table";
+import { useToast } from "@/components/ui/Toast";
+import { apiFetch, getJSON, postJSON } from "@/lib/api";
 import { isoShort } from "@/lib/format";
 import { useLive } from "@/lib/live";
-import type {
-  InstrumentSpec,
-  MarketSelection,
-  ModelRecord,
-  PaperMetrics,
-} from "@/lib/types";
+import type { InstrumentSpec, MarketSelection, ModelRecord, PaperMetrics } from "@/lib/types";
 
 /** Fila de la comparativa; `basis` dice sobre qué curva se midió. */
 interface FilaComparativa extends PaperMetrics {
@@ -35,12 +41,12 @@ interface Comparativa {
 
 export default function ModelsPage() {
   const { refreshStatus } = useLive();
-  const [modelos, setModelos] = useState<ModelRecord[]>([]);
+  const { push } = useToast();
+  const [modelos, setModelos] = useState<ModelRecord[] | null>(null);
   // Un activo por instrumento: el mapa símbolo → run_id que devuelve la API.
   const [activos, setActivos] = useState<Record<string, string>>({});
   const [instrumentoActual, setInstrumentoActual] = useState<string | null>(null);
   const [detalle, setDetalle] = useState<string | null>(null);
-  const [aviso, setAviso] = useState<string | null>(null);
   const [comparativa, setComparativa] = useState<Comparativa | null>(null);
   const [comparando, setComparando] = useState<string | null>(null);
   const [instrumentos, setInstrumentos] = useState<InstrumentSpec[]>([]);
@@ -66,7 +72,9 @@ export default function ModelsPage() {
     }
   }, []);
 
-  useEffect(() => { cargar(); }, [cargar]);
+  useEffect(() => {
+    cargar();
+  }, [cargar]);
 
   useEffect(() => {
     getJSON<{ instruments: InstrumentSpec[] }>("/api/instruments")
@@ -78,9 +86,9 @@ export default function ModelsPage() {
       .finally(() => setCargandoRanking(false));
   }, []);
 
-  const modelosVisibles = instrumento === "all"
-    ? modelos
-    : modelos.filter((modelo) => modelo.instrument === instrumento);
+  const lista = modelos ?? [];
+  const modelosVisibles =
+    instrumento === "all" ? lista : lista.filter((modelo) => modelo.instrument === instrumento);
   const rankingVisible = (seleccion?.ranking ?? []).filter(
     (row) => instrumento === "all" || row.symbol === instrumento
   );
@@ -89,21 +97,33 @@ export default function ModelsPage() {
   );
 
   const activar = async (runId: string) => {
-    const r = await postJSON<{ ok: boolean; error?: string; instrument?: string; meets_acceptance?: boolean }>(
-      `/api/models/${runId}/activate`
-    );
+    const r = await postJSON<{
+      ok: boolean;
+      error?: string;
+      instrument?: string;
+      meets_acceptance?: boolean;
+    }>(`/api/models/${runId}/activate`);
     // El instrumento lo decide el modelo, no el filtro que esté puesto: si no se
     // dijera, activar desde "Todos" parecería haber armado el símbolo en pantalla.
-    setAviso(r.ok
-      ? `Modelo activo para ${r.instrument}: ${runId}. ${r.meets_acceptance ? "Cumple el criterio de aceptación." : "No cumple el criterio; operará bajo tu responsabilidad."}`
-      : r.error ?? "No se pudo activar");
+    if (r.ok) {
+      push(
+        `${runId} es ahora el modelo activo de ${r.instrument}. ${
+          r.meets_acceptance
+            ? "Cumple el criterio de aceptación."
+            : "No cumple el criterio: operará bajo tu responsabilidad."
+        }`,
+        r.meets_acceptance ? "ok" : "warn"
+      );
+    } else {
+      push(r.error ?? "No se pudo activar el modelo.", "danger");
+    }
     await cargar();
     await refreshStatus();
   };
 
   const desactivar = async (simbolo: string) => {
     await postJSON("/api/models/deactivate", { instrument: simbolo });
-    setAviso(`Sin modelo activo para ${simbolo}: FSRPPO no operará ese instrumento`);
+    push(`Sin modelo activo para ${simbolo}: FSRPPO no operará ese instrumento.`, "warn");
     await cargar();
     await refreshStatus();
   };
@@ -122,319 +142,406 @@ export default function ModelsPage() {
     try {
       const response = await apiFetch(`/api/models/${pendingDelete}`, { method: "DELETE" });
       if (!response.ok) throw new Error("No se pudo eliminar el modelo.");
-      setAviso(`Modelo ${pendingDelete} eliminado`);
+      push(`Modelo ${pendingDelete} eliminado.`);
       setPendingDelete(null);
       await cargar();
     } catch (cause) {
-      setAviso(cause instanceof Error ? cause.message : "No se pudo eliminar el modelo.");
+      push(cause instanceof Error ? cause.message : "No se pudo eliminar el modelo.", "danger");
     } finally {
       setDeleting(false);
     }
   };
 
+  const filtro = (
+    <div className="field" style={{ minWidth: 180 }}>
+      <label className="field-label" htmlFor="filtro-instrumento">
+        Instrumento
+      </label>
+      <select
+        id="filtro-instrumento"
+        className="select"
+        value={instrumento}
+        onChange={(event) => setInstrumento(event.target.value)}
+      >
+        <option value="all">Todos</option>
+        {instrumentos.map((spec) => (
+          <option key={spec.symbol} value={spec.symbol}>
+            {spec.symbol}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+
   return (
-    <>
-      <div className="card">
-        <div className="card-head" style={{ flexWrap: "wrap", gap: 12 }}>
-          <div style={{ display: "flex", gap: 8 }} role="tablist" aria-label="Vista de modelos">
-            <button
-              className="btn"
-              role="tab"
-              aria-selected={vista === "models"}
-              aria-controls="models-view"
-              onClick={() => setVista("models")}
-            >
-              MODELOS
-            </button>
-            <button
-              className="btn"
-              role="tab"
-              aria-selected={vista === "ranking"}
-              aria-controls="ranking-view"
-              onClick={() => setVista("ranking")}
-            >
-              ÚLTIMO RANKING
-            </button>
-          </div>
-          <label className="hint model-filter">
-            INSTRUMENTO
-            <select
-              value={instrumento}
-              onChange={(event) => setInstrumento(event.target.value)}
-              aria-label="Filtrar por instrumento"
-            >
-              <option value="all">Todos</option>
-              {instrumentos.map((spec) => (
-                <option key={spec.symbol} value={spec.symbol}>{spec.symbol}</option>
-              ))}
-            </select>
-          </label>
-        </div>
+    <div className="stack">
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-end",
+          justifyContent: "space-between",
+          gap: "var(--s-4)",
+          flexWrap: "wrap",
+        }}
+      >
+        <Tabs
+          label="Vista de modelos"
+          value={vista}
+          onChange={setVista}
+          tabs={[
+            { value: "models", label: "Modelos entrenados" },
+            { value: "ranking", label: "Último ranking" },
+          ]}
+        />
+        {filtro}
       </div>
 
-      {vista === "models" && <div id="models-view" role="tabpanel">
-      <div className="metric-row inner">
-        <div className="metric-card">
-          <div className="m-lbl">MODELOS</div>
-          <div className="m-val">{modelosVisibles.length}</div>
-        </div>
-        <div className="metric-card">
-          <div className="m-lbl">INSTRUMENTOS ARMADOS</div>
-          <div className="m-val">{parejasActivas.length}</div>
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="card-head">
-          <div className="card-title">★ ACTIVO POR INSTRUMENTO</div>
-        </div>
-        {parejasActivas.length === 0 ? (
-          <div className="empty">
-            Ningún instrumento tiene modelo activo: FSRPPO no operará.
-          </div>
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr><th>INSTRUMENTO</th><th>MODELO ACTIVO</th><th>ACCIONES</th></tr>
-              </thead>
-              <tbody>
-                {parejasActivas.map(([simbolo, runId]) => (
-                  <tr key={simbolo} className={simbolo === instrumentoActual ? "ranking-winner" : ""}>
-                    <td>
-                      {simbolo === instrumentoActual ? "▶ " : ""}{simbolo}
-                      {simbolo === instrumentoActual && (
-                        <span className="hint"> · el que opera el bot</span>
-                      )}
-                    </td>
-                    <td>{runId}</td>
-                    <td>
-                      <button className="btn" onClick={() => desactivar(simbolo)}>DESACTIVAR</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      <div className="card">
-        <div className="card-head">
-          <div className="card-title">⧉ MODELOS ENTRENADOS</div>
-        </div>
-
-        {aviso && <div className="hint" style={{ padding: "6px 12px" }} role="status" aria-live="polite">{aviso}</div>}
-
-        <div className="table-wrap">
-          <table>
-            <MetricsHead
-              first="MODELO (TEST)"
-              lead={["INSTRUMENTO", "TF"]}
-              extra={["OPS", "ACCIONES"]}
+      {vista === "models" && (
+        <div className="stack" id="panel-models" role="tabpanel" aria-labelledby="tab-models">
+          <ReadoutRow label="Registro de modelos">
+            <Readout
+              label="Modelos"
+              value={modelos === null ? "—" : modelosVisibles.length}
+              loading={modelos === null}
+              note={instrumento === "all" ? "Entrenados en total" : `Para ${instrumento}`}
             />
-            <tbody>
-              {modelosVisibles.map((m) => (
-                <Fragment key={m.run_id}>
-                  <MetricsRow
-                    name={
-                      <button
-                        className="linkish"
-                        onClick={() => setDetalle(detalle === m.run_id ? null : m.run_id)}
-                        title="Ver detalle"
-                      >
-                        {m.is_active ? "★ " : ""}{m.run_id}{m.meets_acceptance ? "" : " · NO VALIDADO"}
-                      </button>
-                    }
-                    metrics={m.test_metrics}
-                    reference={m.benchmark_metrics}
-                    highlight={!!m.is_active}
-                    lead={[m.instrument, m.timeframe?.toUpperCase() ?? "—"]}
-                    extra={[
-                      m.test_metrics?.trades ?? "—",
-                      <span key="a" style={{ display: "flex", gap: 6 }}>
-                        {!m.is_active && (
-                          <button className="btn" onClick={() => activar(m.run_id)}>ACTIVAR</button>
-                        )}
-                        <button className="btn" onClick={() => comparar(m.run_id)}
-                                disabled={comparando === m.run_id}>
-                          {comparando === m.run_id ? "…" : "COMPARAR"}
-                        </button>
-                        <button
-                          className="btn danger"
-                          onClick={() => setPendingDelete(m.run_id)}
-                          aria-label={`Eliminar modelo ${m.run_id}`}
-                        >✕</button>
-                      </span>,
-                    ]}
-                  />
-                  {detalle === m.run_id && (
-                    <tr>
-                      <td colSpan={12} style={{ background: "rgba(148,163,184,.05)" }}>
-                        <div style={{ display: "grid", gap: 10, padding: "8px 4px" }}>
-                          <div className="hint">
-                            Entrenado {isoShort(m.created_at)}
-                            {m.is_active && " · ACTIVO para su instrumento"}
-                          </div>
-                          <TrainingParams model={m} />
-                          <table>
-                            <MetricsHead first="TRAMO" />
-                            <tbody>
-                              <MetricsRow name="Train" metrics={m.train_metrics} />
-                              <MetricsRow name="Test" metrics={m.test_metrics} />
-                              <MetricsRow name="Buy & Hold (test)" metrics={m.benchmark_metrics} />
-                            </tbody>
-                          </table>
-                          <div className="hint">
-                            Una diferencia grande entre train y test es sobreajuste:
-                            el modelo recuerda el pasado en vez de haber aprendido algo.
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
-          {modelosVisibles.length === 0 && (
-            <div className="empty">
-              {modelos.length === 0
-                ? "Sin modelos todavía — entrena uno en la pestaña de Entrenamiento"
-                : "No hay modelos para el instrumento seleccionado"}
-            </div>
-          )}
-        </div>
-      </div>
+            <Readout
+              label="Instrumentos armados"
+              value={parejasActivas.length}
+              loading={modelos === null}
+              note="Con modelo activo"
+            />
+          </ReadoutRow>
 
-      {comparativa && (
-        <div className="card">
-          <div className="card-head">
-            <div className="card-title">⇄ COMPARATIVA SOBRE EL TRAMO DE TEST</div>
-            {comparativa.test_range && (
-              <span className="chip">
-                {comparativa.test_range[0]?.slice(0, 10)} → {comparativa.test_range[1]?.slice(0, 10)}
-              </span>
-            )}
+          <div className="stack">
+            <Panel
+              label="Activo por instrumento"
+              bleed={parejasActivas.length === 0}
+              caption="Cada instrumento tiene su propio modelo activo: el tamaño de las órdenes se calcula con la ficha del activo con el que se entrenó."
+            >
+              {parejasActivas.length === 0 ? (
+                <EmptyState
+                  title="Ningún instrumento tiene modelo activo"
+                  hint="Mientras siga así, FSRPPO no operará. Activa uno de la tabla de abajo o entrena uno nuevo."
+                  action={
+                    <Link href="/train" className="btn">
+                      Ir a Entrenamiento
+                    </Link>
+                  }
+                />
+              ) : (
+                <TableFrame>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Instrumento</th>
+                        <th>Modelo activo</th>
+                        <th>Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {parejasActivas.map(([simbolo, runId]) => (
+                        <tr key={simbolo} className={simbolo === instrumentoActual ? "is-marked" : ""}>
+                          <td>
+                            {simbolo}
+                            {simbolo === instrumentoActual && (
+                              <div style={{ color: "var(--ink-3)", fontSize: "var(--fs-2xs)" }}>
+                                El que opera el bot
+                              </div>
+                            )}
+                          </td>
+                          <td className="mono">{runId}</td>
+                          <td>
+                            <button className="btn quiet" onClick={() => desactivar(simbolo)}>
+                              Desactivar
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </TableFrame>
+              )}
+            </Panel>
           </div>
 
-          {!comparativa.ok ? (
-            <div className="empty neg">{comparativa.error}</div>
-          ) : (
-            <>
-              <div className="table-wrap">
+          <Panel
+            label="Modelos entrenados"
+            count={modelosVisibles.length}
+            bleed
+            caption="Las siete métricas son las de la Tabla 2 del paper, medidas sobre el tramo de test. El color compara cada modelo con su propio Buy & Hold: verde es mejor que comprar y mantener, rojo peor."
+          >
+            {modelos === null ? (
+              <div style={{ padding: "var(--s-4)" }}>
+                <Skeleton height={24} count={4} />
+              </div>
+            ) : modelosVisibles.length === 0 ? (
+              <EmptyState
+                title={
+                  lista.length === 0
+                    ? "Todavía no hay ningún modelo entrenado"
+                    : "No hay modelos para este instrumento"
+                }
+                hint={
+                  lista.length === 0
+                    ? "Un modelo se entrena sobre un histórico descargado y queda ligado al instrumento y al reloj con los que se entrenó."
+                    : "Cambia el filtro de instrumento o entrena uno para este símbolo."
+                }
+                action={
+                  <Link href="/train" className="btn">
+                    Entrenar un modelo
+                  </Link>
+                }
+              />
+            ) : (
+              <TableFrame>
                 <table>
-                  <MetricsHead first="ESTRATEGIA" extra={["OPS", "VALORACIÓN"]} />
+                  <MetricsHead
+                    first="Modelo (test)"
+                    lead={["Instrumento", "TF"]}
+                    extra={["Ops", "Acciones"]}
+                  />
                   <tbody>
-                    {comparativa.rows?.map((fila) => (
-                      <MetricsRow
-                        key={fila.name}
-                        name={fila.error ? `${fila.name} (falló)` : fila.name}
-                        metrics={fila}
-                        reference={comparativa.rows?.find((f) => f.name === "Buy & Hold")}
-                        highlight={fila.name === "FSRPPO"}
-                        extra={[
-                          fila.trades ?? "—",
-                          fila.basis === "per_bar" ? "barra a barra" : "solo al cerrar",
-                        ]}
-                      />
+                    {modelosVisibles.map((m) => (
+                      <Fragment key={m.run_id}>
+                        <MetricsRow
+                          name={
+                            <button
+                              className="btn quiet"
+                              style={{ padding: 0, fontFamily: "var(--font-mono)" }}
+                              onClick={() => setDetalle(detalle === m.run_id ? null : m.run_id)}
+                              aria-expanded={detalle === m.run_id}
+                              title="Ver los hiperparámetros y los tramos"
+                            >
+                              {m.is_active && <Icon name="star" size={12} />}
+                              {m.run_id}
+                            </button>
+                          }
+                          metrics={m.test_metrics}
+                          reference={m.benchmark_metrics}
+                          highlight={!!m.is_active}
+                          lead={[
+                            m.instrument,
+                            m.timeframe?.toUpperCase() ?? "—",
+                          ]}
+                          extra={[
+                            m.test_metrics?.trades ?? "—",
+                            <span key="a" style={{ display: "flex", gap: "var(--s-1)" }}>
+                              {!m.is_active && (
+                                <button className="btn" onClick={() => activar(m.run_id)}>
+                                  Activar
+                                </button>
+                              )}
+                              <button
+                                className="btn quiet"
+                                onClick={() => comparar(m.run_id)}
+                                disabled={comparando === m.run_id}
+                              >
+                                {comparando === m.run_id ? "Comparando…" : "Comparar"}
+                              </button>
+                              <button
+                                className="btn quiet danger"
+                                onClick={() => setPendingDelete(m.run_id)}
+                                aria-label={`Eliminar modelo ${m.run_id}`}
+                              >
+                                <Icon name="trash" size={13} />
+                              </button>
+                            </span>,
+                          ]}
+                        />
+                        {detalle === m.run_id && (
+                          <tr>
+                            <td colSpan={12} style={{ background: "var(--panel-inset)" }}>
+                              <div style={{ display: "grid", gap: "var(--s-4)", padding: "var(--s-3) 0" }}>
+                                <div className="field-note">
+                                  Entrenado el {isoShort(m.created_at)}
+                                  {m.is_active && " · activo para su instrumento"}
+                                  {!m.meets_acceptance && " · no validado"}
+                                </div>
+                                <TrainingParams model={m} />
+                                <table>
+                                  <MetricsHead first="Tramo" />
+                                  <tbody>
+                                    <MetricsRow name="Train" metrics={m.train_metrics} />
+                                    <MetricsRow name="Test" metrics={m.test_metrics} />
+                                    <MetricsRow name="Buy & Hold (test)" metrics={m.benchmark_metrics} />
+                                  </tbody>
+                                </table>
+                                <p className="field-note">
+                                  Una diferencia grande entre train y test es sobreajuste: el
+                                  modelo recuerda el pasado en vez de haber aprendido algo.
+                                </p>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>
-              </div>
-              <div className="hint" style={{ padding: "8px 12px" }}>
-                FSRPPO y Buy &amp; Hold se valoran a mercado en cada barra; las
-                estrategias por regla solo registran equity al cerrar cada
-                operación. Sobre esa curva a saltos la volatilidad no es
-                comparable, así que su Sharpe, Calmar y Sortino se dejan vacíos
-                en vez de publicar cifras que parecerían equivalentes sin serlo.
-                CRR, máxima caída y número de operaciones sí son comparables.
-              </div>
-            </>
+              </TableFrame>
+            )}
+          </Panel>
+
+          {comparativa && (
+            <Panel
+              label="Comparativa sobre el tramo de test"
+              actions={
+                comparativa.test_range ? (
+                  <span className="field-note">
+                    {comparativa.test_range[0]?.slice(0, 10)} →{" "}
+                    {comparativa.test_range[1]?.slice(0, 10)}
+                  </span>
+                ) : undefined
+              }
+              bleed={comparativa.ok}
+              caption={
+                comparativa.ok
+                  ? "FSRPPO y Buy & Hold se valoran a mercado en cada barra; las estrategias por regla solo registran capital al cerrar cada operación. Sobre esa curva a saltos la volatilidad no es comparable, así que su Sharpe, Calmar y Sortino se dejan vacíos en vez de publicar cifras que parecerían equivalentes sin serlo. CRR, máxima caída y número de operaciones sí son comparables."
+                  : undefined
+              }
+            >
+              {!comparativa.ok ? (
+                <Notice tone="danger">{comparativa.error}</Notice>
+              ) : (
+                <TableFrame>
+                  <table>
+                    <MetricsHead first="Estrategia" extra={["Ops", "Valoración"]} />
+                    <tbody>
+                      {comparativa.rows?.map((fila) => (
+                        <MetricsRow
+                          key={fila.name}
+                          name={fila.error ? `${fila.name} (falló)` : fila.name}
+                          metrics={fila}
+                          reference={comparativa.rows?.find((f) => f.name === "Buy & Hold")}
+                          highlight={fila.name === "FSRPPO"}
+                          extra={[
+                            fila.trades ?? "—",
+                            fila.basis === "per_bar" ? "barra a barra" : "solo al cerrar",
+                          ]}
+                        />
+                      ))}
+                    </tbody>
+                  </table>
+                </TableFrame>
+              )}
+            </Panel>
           )}
         </div>
       )}
-      </div>}
 
       {vista === "ranking" && (
-        <div className="card" id="ranking-view" role="tabpanel">
-          <div className="card-head">
-            <div className="card-title">RANKING DE VALIDACIÓN</div>
-            {seleccion?.created_at && (
-              <span className="chip">{isoShort(seleccion.created_at)}</span>
-            )}
-          </div>
-
-          {cargandoRanking ? (
-            <div className="empty" role="status">Cargando último barrido…</div>
-          ) : !seleccion?.ok ? (
-            <div className="empty">{seleccion?.error ?? "Todavía no hay barridos"}</div>
-          ) : (
-            <>
-              <div className="table-wrap">
+        <div id="panel-ranking" role="tabpanel" aria-labelledby="tab-ranking">
+          <Panel
+            label="Ranking de validación"
+            actions={
+              seleccion?.created_at ? (
+                <span className="field-note">{isoShort(seleccion.created_at)}</span>
+              ) : undefined
+            }
+            bleed
+            caption={
+              seleccion?.ok ? (
+                <>
+                  El ranking usa exclusivamente el 20% de validación: Sharpe mediano entre
+                  semillas y CRR superior a Buy &amp; Hold. El 20% de test se evalúa solo para la
+                  combinación ganadora.
+                  {seleccion.test && (
+                    <>
+                      {" "}
+                      Resultado final: {seleccion.test.passed}/{seleccion.test.total} semillas
+                      (mínimo {seleccion.test.required});
+                      {seleccion.test.accepted ? " criterio aprobado." : " criterio no aprobado."}
+                    </>
+                  )}
+                </>
+              ) : undefined
+            }
+          >
+            {cargandoRanking ? (
+              <div style={{ padding: "var(--s-4)" }}>
+                <Skeleton height={24} count={3} />
+              </div>
+            ) : !seleccion?.ok ? (
+              <EmptyState
+                title="Todavía no hay ningún barrido"
+                hint={
+                  seleccion?.error ??
+                  "Un barrido entrena varias semillas por instrumento y temporalidad, y ordena las combinaciones por su Sharpe mediano en validación."
+                }
+              />
+            ) : rankingVisible.length === 0 ? (
+              <EmptyState title="No hay resultados para este instrumento" />
+            ) : (
+              <TableFrame>
                 <table>
                   <thead>
                     <tr>
-                      <th>RANK</th>
-                      <th>INSTRUMENTO</th>
+                      <th className="num">Puesto</th>
+                      <th>Instrumento</th>
                       <th>TF</th>
-                      <th>SHARPE MEDIANO</th>
-                      <th>CRR MEDIANO</th>
-                      <th>CRR B&amp;H</th>
-                      <th>ESTADO</th>
+                      <th className="num">Sharpe mediano</th>
+                      <th className="num">CRR mediano</th>
+                      <th className="num">CRR de B&amp;H</th>
+                      <th>Estado</th>
                     </tr>
                   </thead>
                   <tbody>
                     {rankingVisible.map((row) => (
-                      <tr key={`${row.symbol}-${row.timeframe}`} className={row.winner ? "ranking-winner" : ""}>
-                        <td>{row.rank}</td>
-                        <td>{row.winner ? "GANADORA · " : ""}{row.symbol}</td>
-                        <td>{row.timeframe.toUpperCase()}</td>
-                        <td>{row.validation.median_sharpe?.toFixed(3) ?? "—"}</td>
+                      <tr
+                        key={`${row.symbol}-${row.timeframe}`}
+                        className={row.winner ? "is-marked" : ""}
+                      >
+                        <td className="num">{row.rank}</td>
                         <td>
+                          {row.symbol}
+                          {row.winner && (
+                            <>
+                              {" "}
+                              <Mark tone="ok">Ganadora</Mark>
+                            </>
+                          )}
+                        </td>
+                        <td>{row.timeframe.toUpperCase()}</td>
+                        <td className="num">{row.validation.median_sharpe?.toFixed(3) ?? "—"}</td>
+                        <td className="num">
                           {row.validation.median_crr == null
                             ? "—"
                             : `${(row.validation.median_crr * 100).toFixed(2)}%`}
                         </td>
-                        <td>
+                        <td className="num">
                           {row.validation.benchmark_crr == null
                             ? "—"
                             : `${(row.validation.benchmark_crr * 100).toFixed(2)}%`}
                         </td>
-                        <td>{row.eligible ? "CRR > B&H" : "No supera B&H"}</td>
+                        <td className={row.eligible ? "pos" : "muted"}>
+                          {row.eligible ? "Supera a B&H" : "No supera a B&H"}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-                {rankingVisible.length === 0 && (
-                  <div className="empty">No hay resultados para el instrumento seleccionado</div>
-                )}
-              </div>
-
-              <div className="hint" style={{ padding: "10px 12px" }}>
-                El ranking usa exclusivamente el 20 % de validación: Sharpe mediano
-                entre semillas y CRR superior a Buy &amp; Hold. El 20 % de test se
-                evalúa solo para la combinación ganadora.
-                {seleccion.test && (
-                  <> Resultado final: {seleccion.test.passed}/{seleccion.test.total} semillas
-                    (mínimo {seleccion.test.required});
-                    {seleccion.test.accepted ? " criterio aprobado." : " criterio no aprobado."}</>
-                )}
-              </div>
-            </>
-          )}
+              </TableFrame>
+            )}
+          </Panel>
         </div>
       )}
+
       <ConfirmDialog
         open={pendingDelete !== null}
         title="Eliminar modelo"
-        description={<>Se eliminará <strong>{pendingDelete}</strong>. Esta acción no se puede deshacer.</>}
-        confirmLabel="ELIMINAR MODELO"
+        description={
+          <>
+            Se eliminará <strong>{pendingDelete}</strong> y sus pesos entrenados. Esta acción no se
+            puede deshacer.
+          </>
+        }
+        confirmLabel="Eliminar modelo"
         danger
         busy={deleting}
         onCancel={() => setPendingDelete(null)}
         onConfirm={borrar}
       />
-    </>
+    </div>
   );
 }

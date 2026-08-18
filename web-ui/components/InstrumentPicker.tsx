@@ -1,10 +1,17 @@
 "use client";
 /* Selector del instrumento que opera el bot: divisas, metales, materias primas,
    índices, acciones y CFD que la cuenta FXCM ofrece de verdad. El catálogo lo
-   descubre el backend de la tabla OFFERS; aquí solo se lee y se elige. */
+   descubre el backend de la tabla OFFERS; aquí solo se lee y se elige.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+   Ya no es una tarjeta suelta: vive dentro del mandato, junto a la estrategia y
+   el modelo, porque las tres cosas son la misma pregunta —qué opera el bot—. */
+
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import ConfirmDialog from "./ConfirmDialog";
+import Icon from "./ui/Icon";
+import Notice from "./ui/Notice";
+import { useReach } from "./ui/reach";
+import { useToast } from "./ui/Toast";
 import { getJSON, postJSON } from "@/lib/api";
 import { useLive } from "@/lib/live";
 import type { CatalogEntry, CurrentInstrument, InstrumentCatalog } from "@/lib/types";
@@ -22,8 +29,9 @@ const CLASS_LABELS: Record<string, string> = {
 
 const CLASS_ORDER = ["forex", "bullion", "commodity", "index", "treasury", "crypto", "share", "other"];
 
-export default function InstrumentPicker({ onAction }: { onAction?: (msg: string, ok: boolean) => void }) {
+export default function InstrumentPicker() {
   const { status, positions, refreshStatus } = useLive();
+  const { push } = useToast();
   const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
   const [current, setCurrent] = useState<CurrentInstrument | null>(null);
   const [query, setQuery] = useState("");
@@ -31,6 +39,9 @@ export default function InstrumentPicker({ onAction }: { onAction?: (msg: string
   const [truncated, setTruncated] = useState(false);
   const [pendingChange, setPendingChange] = useState<string | null>(null);
   const [pendingSubscription, setPendingSubscription] = useState<string | null>(null);
+  const selectId = useId();
+  const searchId = useId();
+  const positionsReach = useReach("positions");
 
   const load = useCallback(async () => {
     try {
@@ -54,9 +65,10 @@ export default function InstrumentPicker({ onAction }: { onAction?: (msg: string
   // por instrumento, así que cambiarlo dejaría una posición que el motor ya no
   // vería y nunca cerraría. Ese bloqueo se mantiene y hay que resolverlo a mano.
   const blocked = useMemo(
-    () => (positions.length > 0
-      ? `Cierra las ${positions.length === 1 ? "posición abierta" : `${positions.length} posiciones abiertas`} antes de cambiar de instrumento`
-      : null),
+    () =>
+      positions.length > 0
+        ? `Cierra ${positions.length === 1 ? "la posición abierta" : `las ${positions.length} posiciones abiertas`} antes de cambiar de instrumento`
+        : null,
     [positions.length]
   );
   // El bot en marcha también lo rechaza, pero eso sí se puede resolver aquí:
@@ -101,20 +113,18 @@ export default function InstrumentPicker({ onAction }: { onAction?: (msg: string
       if (needsPause) {
         const p = await postJSON<{ ok: boolean; error?: string }>("/api/control/pause");
         if (!p.ok) {
-          onAction?.(`No se pudo pausar: ${p.error ?? "error desconocido"}`, false);
+          push(`No se pudo pausar: ${p.error ?? "error desconocido"}`, "danger");
           return;
         }
-        onAction?.("Bot pausado para cambiar de instrumento", true);
+        push("Bot pausado para cambiar de instrumento.", "warn");
       }
       const r = await postJSON<{ ok: boolean; error?: string }>("/api/instrument", { symbol: next });
       if (!r.ok) {
-        onAction?.(`Error: ${r.error}`, false);
+        push(r.error ?? "No se pudo cambiar de instrumento.", "danger");
         return;
       }
-      onAction?.(`Instrumento cambiado a ${next}`, true);
-      if (entry && !entry.tradable) {
-        setPendingSubscription(next);
-      }
+      push(`Instrumento cambiado a ${next}.`);
+      if (entry && !entry.tradable) setPendingSubscription(next);
       await Promise.all([load(), refreshStatus()]);
     } finally {
       setBusy(false);
@@ -129,7 +139,12 @@ export default function InstrumentPicker({ onAction }: { onAction?: (msg: string
         "/api/instrument/subscribe",
         { symbol: pendingSubscription }
       );
-      onAction?.(s.ok ? `${pendingSubscription} activado (estado ${s.status})` : `Error: ${s.error}`, Boolean(s.ok));
+      push(
+        s.ok
+          ? `${pendingSubscription} activado (estado ${s.status}).`
+          : (s.error ?? "No se pudo activar el instrumento."),
+        s.ok ? "ok" : "danger"
+      );
       if (s.ok) setPendingSubscription(null);
       await load();
     } finally {
@@ -140,82 +155,66 @@ export default function InstrumentPicker({ onAction }: { onAction?: (msg: string
   async function refreshCatalog() {
     setBusy(true);
     try {
-      const r = await postJSON<{ ok: boolean; error?: string; count?: number }>("/api/instruments/refresh");
-      onAction?.(r.ok ? `Catálogo actualizado: ${r.count} instrumentos` : `Error: ${r.error}`, !!r.ok);
+      const r = await postJSON<{ ok: boolean; error?: string; count?: number }>(
+        "/api/instruments/refresh"
+      );
+      push(
+        r.ok ? `Catálogo actualizado: ${r.count} instrumentos.` : (r.error ?? "No se pudo actualizar."),
+        r.ok ? "ok" : "danger"
+      );
       await load();
     } finally {
       setBusy(false);
     }
   }
 
-  const modo = current?.execution_mode;
-  const enVivo = modo === "live";
-
   return (
-    <div className="card" style={{ marginBottom: "16px", padding: "16px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-        <span className="card-title">
-          INSTRUMENTO
-        </span>
-        <button className="link-btn" onClick={refreshCatalog} disabled={busy}
-                title="Volver a leer la tabla de ofertas de FXCM">
-          ACTUALIZAR
+    <div style={{ display: "grid", gap: "var(--s-2)" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <label className="field-label" htmlFor={selectId}>
+          Instrumento
+        </label>
+        <button
+          className="btn quiet"
+          onClick={refreshCatalog}
+          disabled={busy}
+          title="Volver a leer la tabla de ofertas de FXCM"
+        >
+          <Icon name="refresh" size={13} />
+          Actualizar catálogo
         </button>
       </div>
 
-      {modo && (
-        <div
-          style={{
-            marginBottom: "10px", padding: "6px 10px", borderRadius: "6px", fontSize: "11px",
-            fontWeight: 700, letterSpacing: "0.5px",
-            background: enVivo ? "rgba(240,113,106,0.12)" : "rgba(154,168,248,0.10)",
-            color: enVivo ? "#f0716a" : "var(--text-muted)",
-            border: `1px solid ${enVivo ? "rgba(240,113,106,0.4)" : "var(--border)"}`,
-          }}
-        >
-          {enVivo
-            ? `ÓRDENES REALES — cuenta ${current?.connection}`
-            : "SIMULADO — precios sintéticos"}
+      {blocked && (
+        <div {...positionsReach}>
+          <Notice tone="danger" title="No se puede cambiar de instrumento.">
+            {blocked}: el bot filtra las operaciones abiertas por símbolo, así que al cambiar
+            dejaría de verlas y no las cerraría nunca.
+          </Notice>
         </div>
+      )}
+      {needsPause && (
+        <Notice tone="warn">
+          El bot está operando: al elegir otro instrumento se pausará primero.
+        </Notice>
       )}
 
       <input
+        id={searchId}
+        className="input"
         aria-label="Buscar instrumento"
         type="search"
         value={query}
         placeholder="Buscar (EUR, US30, AAPL…)"
         onChange={(e) => setQuery(e.target.value)}
-        style={{
-          width: "100%", marginBottom: "8px", background: "var(--card2)",
-          border: "1px solid var(--border)", borderRadius: "6px",
-          color: "var(--text)", fontSize: "13px", padding: "6px 10px", outline: "none",
-        }}
       />
 
-      {blocked && (
-        <div className="picker-blocked">
-          <strong>No se puede cambiar de instrumento.</strong> {blocked} — el bot
-          filtra las operaciones abiertas por símbolo, así que al cambiar dejaría
-          de verlas y no las cerraría nunca. Ciérralas en el panel de posiciones.
-        </div>
-      )}
-      {needsPause && (
-        <div className="picker-warn">
-          El bot está operando: al elegir otro instrumento se pausará primero.
-        </div>
-      )}
-
       <select
-        aria-label="Instrumento activo"
+        id={selectId}
+        className="select"
         value={symbol}
         disabled={busy || !!blocked}
         onChange={(e) => change(e.target.value)}
-        style={{
-          width: "100%", background: "var(--card2)", border: "1px solid var(--border)",
-          borderRadius: "6px", color: "var(--text)", fontSize: "13px",
-          fontWeight: "600", padding: "6px 12px", outline: "none",
-          cursor: blocked ? "not-allowed" : "pointer",
-        }}
       >
         {/* El activo puede quedar fuera del filtro; se mantiene visible. */}
         {!grouped.some((g) => g.items.some((i) => i.symbol === symbol)) && (
@@ -233,26 +232,34 @@ export default function InstrumentPicker({ onAction }: { onAction?: (msg: string
         ))}
       </select>
 
-      <div style={{ marginTop: "8px", fontSize: "11px", color: "var(--text-muted)", lineHeight: 1.6 }}>
+      <div className="field-note">
         {current && (
           <div>
-            {CLASS_LABELS[current.asset_class] ?? current.asset_class} · pip {current.pip} ·
-            mín {current.min_lot} · 1 lote = {current.lot_size} uds
+            {CLASS_LABELS[current.asset_class] ?? current.asset_class} · pip {current.pip} · mín{" "}
+            {current.min_lot} · 1 lote = {current.lot_size} uds
           </div>
         )}
         {current && current.subscription_status !== "T" && (
-          <div className="neg">Estado “{current.subscription_status}”: no operable todavía</div>
+          <div className="neg">Estado «{current.subscription_status}»: no operable todavía</div>
         )}
         {truncated && <div>Catálogo recortado: hay más instrumentos de los que caben</div>}
-        {current?.catalog_updated_at
-          ? <div>Catálogo: {current.catalog_updated_at.slice(0, 16).replace("T", " ")}</div>
-          : <div>Catálogo sin descubrir — pulsa ACTUALIZAR</div>}
+        {current?.catalog_updated_at ? (
+          <div>Catálogo leído el {current.catalog_updated_at.slice(0, 16).replace("T", " ")}</div>
+        ) : (
+          <div>Catálogo sin descubrir — pulsa «Actualizar catálogo»</div>
+        )}
       </div>
+
       <ConfirmDialog
         open={pendingChange !== null}
         title="Pausar y cambiar instrumento"
-        description={<>El bot se pausará antes de cambiar a <strong>{pendingChange}</strong>. Tendrás que iniciarlo de nuevo manualmente.</>}
-        confirmLabel="PAUSAR Y CAMBIAR"
+        description={
+          <>
+            El bot se pausará antes de cambiar a <strong>{pendingChange}</strong>. Tendrás que
+            iniciarlo de nuevo manualmente.
+          </>
+        }
+        confirmLabel="Pausar y cambiar"
         busy={busy}
         onCancel={() => setPendingChange(null)}
         onConfirm={() => {
@@ -264,8 +271,13 @@ export default function InstrumentPicker({ onAction }: { onAction?: (msg: string
       <ConfirmDialog
         open={pendingSubscription !== null}
         title="Activar instrumento en FXCM"
-        description={<><strong>{pendingSubscription}</strong> no está habilitado para operar. Activarlo modificará de forma persistente la suscripción de la cuenta FXCM.</>}
-        confirmLabel="ACTIVAR INSTRUMENTO"
+        description={
+          <>
+            <strong>{pendingSubscription}</strong> no está habilitado para operar. Activarlo
+            modificará de forma persistente la suscripción de la cuenta FXCM.
+          </>
+        }
+        confirmLabel="Activar instrumento"
         danger
         busy={busy}
         onCancel={() => setPendingSubscription(null)}

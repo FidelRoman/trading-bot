@@ -63,11 +63,21 @@ class ModelRecord:
         return asdict(self)
 
 
+def _as_float(source: dict, key: str) -> float:
+    """Como ``source.get(key, nan)``, pero también para el caso frecuente de
+    que la clave exista con valor ``None`` — así serializa ``Metrics.as_dict()``
+    un Sharpe o un CRR no finitos (0 operaciones, varianza nula), y ``.get``
+    con valor por defecto no cubre ese caso: solo se usa cuando la clave falta,
+    no cuando está presente y vale ``None``."""
+    value = source.get(key)
+    return float(value) if value is not None else float("nan")
+
+
 def meets_acceptance(record: ModelRecord) -> bool:
     """Criterio informativo del proyecto; nunca bloquea la activación manual."""
-    sharpe = float(record.test_metrics.get("sharpe", float("nan")))
-    crr = float(record.test_metrics.get("crr", float("nan")))
-    benchmark = float(record.benchmark_metrics.get("crr", float("nan")))
+    sharpe = _as_float(record.test_metrics, "sharpe")
+    crr = _as_float(record.test_metrics, "crr")
+    benchmark = _as_float(record.benchmark_metrics, "crr")
     return math.isfinite(sharpe) and sharpe > 0 and math.isfinite(crr) and crr > benchmark
 
 

@@ -24,13 +24,25 @@ function val(source: Record<string, unknown>, key: string): string {
 
 function Bloque({ titulo, filas }: { titulo: string; filas: [string, string, string?][] }) {
   return (
-    <div className="param-block">
-      <div className="param-block-title">{titulo}</div>
-      <dl className="param-grid">
+    <div
+      style={{
+        border: "1px solid var(--rule-faint)",
+        background: "var(--panel)",
+        padding: "var(--s-3)",
+      }}
+    >
+      <div className="field-label" style={{ marginBottom: "var(--s-2)" }}>
+        {titulo}
+      </div>
+      <dl style={{ display: "grid", gap: "var(--s-1)", margin: 0 }}>
         {filas.map(([etiqueta, valor, ayuda]) => (
-          <div key={etiqueta} className="param-item">
-            <dt title={ayuda}>{etiqueta}</dt>
-            <dd>{valor}</dd>
+          <div key={etiqueta} style={{ display: "flex", justifyContent: "space-between", gap: "var(--s-3)" }}>
+            <dt style={{ fontSize: "var(--fs-2xs)", color: "var(--ink-3)" }} title={ayuda}>
+              {etiqueta}
+            </dt>
+            <dd className="num" style={{ fontSize: "var(--fs-2xs)", margin: 0, fontWeight: 600 }}>
+              {valor}
+            </dd>
           </div>
         ))}
       </dl>
@@ -44,24 +56,35 @@ export default function TrainingParams({ model }: { model: ModelRecord }) {
   const env = model.env_params as Record<string, unknown>;
   // El spread puede venir explícito o heredado de la ficha del instrumento.
   const instrumento = (env?.instrument ?? {}) as Record<string, unknown>;
-  const spread = env?.spread_pips != null
-    ? val(env, "spread_pips")
-    : val(instrumento, "typical_spread_pips");
+  const spread =
+    env?.spread_pips != null ? val(env, "spread_pips") : val(instrumento, "typical_spread_pips");
 
   return (
-    <div style={{ display: "grid", gap: 10 }}>
-      <div className="param-blocks">
+    <div style={{ display: "grid", gap: "var(--s-3)" }}>
+      <div
+        style={{
+          display: "grid",
+          gap: "var(--s-3)",
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+        }}
+      >
         <Bloque
-          titulo="INSTRUMENTO Y DATOS"
+          titulo="Instrumento y datos"
           filas={[
             ["Instrumento", model.instrument],
-            ["Timeframe", model.timeframe?.toUpperCase() ?? "—"],
-            ["Train", `${model.train_range?.[0]?.slice(0, 10) ?? "—"} → ${model.train_range?.[1]?.slice(0, 10) ?? "—"}`],
-            ["Test", `${model.test_range?.[0]?.slice(0, 10) ?? "—"} → ${model.test_range?.[1]?.slice(0, 10) ?? "—"}`],
+            ["Temporalidad", model.timeframe?.toUpperCase() ?? "—"],
+            [
+              "Train",
+              `${model.train_range?.[0]?.slice(0, 10) ?? "—"} → ${model.train_range?.[1]?.slice(0, 10) ?? "—"}`,
+            ],
+            [
+              "Test",
+              `${model.test_range?.[0]?.slice(0, 10) ?? "—"} → ${model.test_range?.[1]?.slice(0, 10) ?? "—"}`,
+            ],
           ]}
         />
         <Bloque
-          titulo="FSR · LIMPIEZA DE LA SEÑAL"
+          titulo="FSR · limpieza de la señal"
           filas={[
             ["Ventana", val(fsr, "window"), "Cierres que ve el agente en cada decisión"],
             ["Ensemble", val(fsr, "ensemble_size"), "Realizaciones de ruido de CEESMDAN"],
@@ -70,7 +93,7 @@ export default function TrainingParams({ model }: { model: ModelRecord }) {
           ]}
         />
         <Bloque
-          titulo="PPO · APRENDIZAJE"
+          titulo="PPO · aprendizaje"
           filas={[
             ["Learning rate", val(ppo, "learning_rate"), "1e-5 es el del paper y no llega a operar en FX"],
             ["Iteraciones", val(ppo, "iterations")],
@@ -81,7 +104,7 @@ export default function TrainingParams({ model }: { model: ModelRecord }) {
           ]}
         />
         <Bloque
-          titulo="ENTORNO · COSTES Y TAMAÑO"
+          titulo="Entorno · costes y tamaño"
           filas={[
             ["Spread asumido", `${spread} pips`, "El coste por operar: lo que hundió EUR/USD en H1"],
             ["Exposición máx.", val(env, "max_units"), "Unidades netas; depende del instrumento"],
@@ -91,9 +114,25 @@ export default function TrainingParams({ model }: { model: ModelRecord }) {
         />
       </div>
       <details>
-        <summary className="hint">Volcado completo</summary>
-        <pre style={{ fontSize: 11, overflowX: "auto" }}>
-{JSON.stringify({ fsr: model.fsr_params, ppo: model.ppo_params, env: model.env_params }, null, 2)}
+        <summary className="field-note" style={{ cursor: "pointer" }}>
+          Volcado completo
+        </summary>
+        <pre
+          className="mono"
+          style={{
+            fontSize: "var(--fs-eje)",
+            overflowX: "auto",
+            padding: "var(--s-3)",
+            border: "1px solid var(--rule-faint)",
+            background: "var(--panel)",
+            marginTop: "var(--s-2)",
+          }}
+        >
+          {JSON.stringify(
+            { fsr: model.fsr_params, ppo: model.ppo_params, env: model.env_params },
+            null,
+            2
+          )}
         </pre>
       </details>
     </div>

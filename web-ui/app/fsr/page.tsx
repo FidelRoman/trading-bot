@@ -3,9 +3,16 @@
 
    Muestra qué hace FSR con la ventana actual: cómo se descompone el precio en
    modos, qué exponente de Hurst tiene cada uno y cuáles se descartan por ruido.
-   Es la pestaña que permite entender —y desconfiar de— lo que ve el agente. */
+   Es la página que permite entender —y desconfiar de— lo que ve el agente. */
 
 import { useCallback, useEffect, useState } from "react";
+import EmptyState from "@/components/ui/EmptyState";
+import Mark from "@/components/ui/Mark";
+import { Panel } from "@/components/ui/Panel";
+import Readout, { ReadoutRow } from "@/components/ui/Readout";
+import Skeleton from "@/components/ui/Skeleton";
+import { TableFrame } from "@/components/ui/Table";
+import { useToast } from "@/components/ui/Toast";
 import { getJSON, postJSON } from "@/lib/api";
 import { useLive } from "@/lib/live";
 import type { FsrPreview, TrainingState } from "@/lib/types";
@@ -15,12 +22,12 @@ const TIMEFRAMES = ["m15", "m30", "h1", "h4", "d1"];
 /** Polilínea normalizada a la caja del SVG. */
 function Spark({
   series,
-  color,
-  height = 60,
+  tone,
+  height = 40,
   zero = false,
 }: {
   series: number[];
-  color: string;
+  tone: "long" | "short" | "accent";
   height?: number;
   zero?: boolean;
 }) {
@@ -39,15 +46,31 @@ function Spark({
   const yZero = height - ((0 - min) / span) * height;
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img"
-         aria-label={`Serie de ${series.length} puntos, mínimo ${min.toFixed(3)} y máximo ${max.toFixed(3)}`}
-         style={{ width: "100%", height, display: "block" }}>
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+      role="img"
+      aria-label={`Serie de ${series.length} puntos, mínimo ${min.toFixed(3)} y máximo ${max.toFixed(3)}`}
+      style={{ width: "100%", height, display: "block" }}
+    >
       {zero && min < 0 && max > 0 && (
-        <line x1="0" y1={yZero} x2={width} y2={yZero}
-              stroke="rgba(148,163,184,.35)" strokeWidth="0.4" strokeDasharray="2 2" />
+        <line
+          x1="0"
+          y1={yZero}
+          x2={width}
+          y2={yZero}
+          stroke="var(--plot-axis)"
+          strokeWidth="0.4"
+          strokeDasharray="2 2"
+        />
       )}
-      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.2"
-                vectorEffect="non-scaling-stroke" />
+      <polyline
+        points={pts}
+        fill="none"
+        stroke={`var(--${tone})`}
+        strokeWidth="1.2"
+        vectorEffect="non-scaling-stroke"
+      />
     </svg>
   );
 }
@@ -58,27 +81,50 @@ function Overlay({ prices, signal }: { prices: number[]; signal: number[] }) {
   const min = Math.min(...todos);
   const max = Math.max(...todos);
   const span = max - min || 1;
-  const h = 200;
+  const h = 220;
   const line = (s: number[]) =>
-    s.map((v, i) => `${((i / (s.length - 1)) * 100).toFixed(2)},${(h - ((v - min) / span) * h).toFixed(2)}`).join(" ");
+    s
+      .map((v, i) => `${((i / (s.length - 1)) * 100).toFixed(2)},${(h - ((v - min) / span) * h).toFixed(2)}`)
+      .join(" ");
 
   return (
-    <svg viewBox={`0 0 100 ${h}`} preserveAspectRatio="none" role="img"
-         aria-label="Comparación entre el precio original y la señal FSR reconstruida"
-         style={{ width: "100%", height: h, display: "block" }}>
-      <polyline points={line(prices)} fill="none" stroke="rgba(148,163,184,.55)"
-                strokeWidth="1" vectorEffect="non-scaling-stroke" />
-      <polyline points={line(signal)} fill="none" stroke="#4ade80"
-                strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
+    <svg
+      viewBox={`0 0 100 ${h}`}
+      preserveAspectRatio="none"
+      role="img"
+      aria-label="Comparación entre el precio original y la señal FSR reconstruida"
+      style={{
+        width: "100%",
+        height: h,
+        display: "block",
+        borderBottom: "1px solid var(--rule)",
+        borderLeft: "1px solid var(--rule)",
+      }}
+    >
+      <polyline
+        points={line(prices)}
+        fill="none"
+        stroke="var(--ink-3)"
+        strokeWidth="1"
+        vectorEffect="non-scaling-stroke"
+      />
+      <polyline
+        points={line(signal)}
+        fill="none"
+        stroke="var(--long)"
+        strokeWidth="1.6"
+        vectorEffect="non-scaling-stroke"
+      />
     </svg>
   );
 }
 
 export default function FsrPage() {
   const { candleVersion } = useLive();
+  const { push } = useToast();
   const [tf, setTf] = useState("h1");
   const [data, setData] = useState<FsrPreview | null>(null);
-  const [cargando, setCargando] = useState(false);
+  const [cargando, setCargando] = useState(true);
   const [job, setJob] = useState<TrainingState | null>(null);
 
   const cargar = useCallback(async (timeframe: string) => {
@@ -92,7 +138,9 @@ export default function FsrPage() {
     }
   }, []);
 
-  useEffect(() => { cargar(tf); }, [tf, candleVersion, cargar]);
+  useEffect(() => {
+    cargar(tf);
+  }, [tf, candleVersion, cargar]);
 
   useEffect(() => {
     const leer = () => getJSON<TrainingState>("/api/training").then(setJob).catch(() => {});
@@ -103,132 +151,165 @@ export default function FsrPage() {
 
   const precalcular = async () => {
     await postJSON("/api/training/precompute", { timeframe: tf });
+    push("Precálculo de la caché FSR lanzado.");
     setTimeout(() => getJSON<TrainingState>("/api/training").then(setJob).catch(() => {}), 300);
   };
 
   const corriendo = job?.status === "running";
+  const precalculando = corriendo && job?.kind === "precompute";
+  const progreso = Math.round((job?.progress ?? 0) * 100);
   const conservadas = data?.kept.filter(Boolean).length ?? 0;
 
   return (
-    <>
-      <div className="metric-row inner">
-        <div className="metric-card">
-          <div className="m-lbl">VENTANA</div>
-          <div className="m-val">{data?.window ?? "—"}</div>
-        </div>
-        <div className="metric-card">
-          <div className="m-lbl">MODOS (IMF)</div>
-          <div className="m-val">{data?.imfs.length ?? "—"}</div>
-        </div>
-        <div className="metric-card">
-          <div className="m-lbl">CONSERVADOS</div>
-          <div className="m-val">{data ? `${conservadas}/${data.imfs.length}` : "—"}</div>
-        </div>
-        <div className="metric-card">
-          <div className="m-lbl">RUIDO DESCARTADO</div>
-          <div className="m-val">
-            {data ? `${(data.discarded_energy * 100).toFixed(1)}%` : "—"}
-          </div>
-        </div>
-      </div>
+    <div className="stack">
+      <ReadoutRow label="Descomposición de la ventana actual">
+        <Readout label="Ventana" value={data?.window ?? "—"} loading={cargando} note="Cierres que ve el agente" />
+        <Readout label="Modos (IMF)" value={data?.imfs.length ?? "—"} loading={cargando} />
+        <Readout
+          label="Conservados"
+          value={data ? `${conservadas} de ${data.imfs.length}` : "—"}
+          loading={cargando}
+          note="Los de memoria larga"
+        />
+        <Readout
+          label="Ruido descartado"
+          value={data ? `${(data.discarded_energy * 100).toFixed(1)}%` : "—"}
+          loading={cargando}
+          note="De la varianza de la ventana"
+        />
+      </ReadoutRow>
 
-      <div className="card">
-        <div className="card-head">
-          <div className="card-title">∿ SEÑAL RECONSTRUIDA vs PRECIO</div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <label className="sr-only" htmlFor="fsr-timeframe">Temporalidad de la señal FSR</label>
-            <select id="fsr-timeframe" value={tf} onChange={(e) => setTf(e.target.value)}>
-              {TIMEFRAMES.map((t) => <option key={t} value={t}>{t.toUpperCase()}</option>)}
+      <Panel
+        label="Señal reconstruida frente al precio"
+        actions={
+          <>
+            <label className="sr-only" htmlFor="fsr-timeframe">
+              Temporalidad de la señal FSR
+            </label>
+            <select
+              id="fsr-timeframe"
+              className="select"
+              style={{ width: "auto" }}
+              value={tf}
+              onChange={(e) => setTf(e.target.value)}
+            >
+              {TIMEFRAMES.map((t) => (
+                <option key={t} value={t}>
+                  {t.toUpperCase()}
+                </option>
+              ))}
             </select>
             <button className="btn" onClick={() => cargar(tf)} disabled={cargando}>
-              {cargando ? "CALCULANDO…" : "RECALCULAR"}
+              {cargando ? "Calculando…" : "Recalcular"}
             </button>
-          </div>
-        </div>
-
-        {data?.ok ? (
-          <>
-            <Overlay prices={data.prices} signal={data.signal} />
-            <div className="hint" style={{ padding: "6px 12px" }}>
-              <span style={{ color: "rgba(148,163,184,.9)" }}>▬ precio crudo</span>
-              {"   "}
-              <span style={{ color: "#4ade80" }}>▬ señal FSR</span>
-              {"   "}— la diferencia entre ambas es exactamente lo que el agente
-              nunca llega a ver.
-            </div>
           </>
+        }
+        caption={
+          data?.ok ? (
+            <>
+              <span style={{ color: "var(--ink-3)" }}>——— precio crudo</span> ·{" "}
+              <span style={{ color: "var(--long)" }}>——— señal FSR</span>. La diferencia entre
+              ambas es exactamente lo que el agente nunca llega a ver.
+            </>
+          ) : undefined
+        }
+      >
+        {cargando ? (
+          <Skeleton height={220} />
+        ) : data?.ok ? (
+          <Overlay prices={data.prices} signal={data.signal} />
         ) : (
-          <div className="empty">{data?.error ?? "Sin datos suficientes para descomponer"}</div>
+          <EmptyState
+            title="Sin datos suficientes para descomponer"
+            hint={data?.error ?? "Hacen falta al menos tantas velas como cierres tiene la ventana."}
+          />
         )}
-      </div>
+      </Panel>
 
-      <div className="card">
-        <div className="card-head">
-          <div className="card-title">◫ MODOS INTRÍNSECOS Y MEMORIA (HURST)</div>
+      <Panel
+        label="Modos intrínsecos y memoria"
+        actions={
           <button className="btn" onClick={precalcular} disabled={corriendo}>
-            {corriendo && job?.kind === "precompute"
-              ? `PRECALCULANDO ${Math.round((job.progress ?? 0) * 100)}%`
-              : "PRECALCULAR CACHÉ"}
+            {precalculando ? `Precalculando ${progreso}%` : "Precalcular caché"}
           </button>
-        </div>
-
-        {corriendo && job?.kind === "precompute" && (
-          <div style={{ padding: "0 12px 10px" }} role="status" aria-live="polite">
-            <div className="progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((job.progress ?? 0) * 100)}>
-              <div style={{
-                width: `${(job.progress ?? 0) * 100}%`, height: "100%",
-                background: "#4ade80", borderRadius: 3, transition: "width .4s",
-              }} />
+        }
+        bleed
+        caption="Los modos con Hurst ≤ 0,5 no tienen memoria: son las «olas» del paper y se eliminan. Los de Hurst > 0,5 conservan su tendencia durante un tiempo —las «mareas»— y se suman junto al residuo para formar la señal."
+      >
+        {precalculando && (
+          <div style={{ padding: "var(--s-3) var(--s-4)" }} role="status" aria-live="polite">
+            <div
+              className="meter"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progreso}
+              aria-label="Precálculo de la caché FSR"
+            >
+              <span style={{ "--fill": progreso / 100 } as React.CSSProperties} />
             </div>
-            <div className="hint" style={{ marginTop: 6 }}>{job.note}</div>
+            <p className="field-note" style={{ marginTop: "var(--s-2)" }}>
+              {job?.note}
+            </p>
           </div>
         )}
 
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>MODO</th><th>HURST</th><th>MEMORIA</th><th>DESTINO</th><th style={{ width: "50%" }}>FORMA</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data?.ok && data.imfs.map((imf, i) => (
-                <tr key={i}>
-                  <td>IMF {i + 1}</td>
-                  <td>{data.hursts[i]?.toFixed(3) ?? "—"}</td>
-                  <td>{data.kept[i] ? "larga" : "corta"}</td>
-                  <td className={data.kept[i] ? "pos" : "neg"}>
-                    {data.kept[i] ? "SE CONSERVA" : "SE DESCARTA"}
-                  </td>
-                  <td><Spark series={imf} color={data.kept[i] ? "#4ade80" : "#f0716a"} height={40} zero /></td>
-                </tr>
-              ))}
-              {data?.ok && (
+        {cargando ? (
+          <div style={{ padding: "var(--s-4)" }}>
+            <Skeleton height={28} count={4} />
+          </div>
+        ) : !data?.ok ? (
+          <EmptyState title="Sin descomposición disponible" />
+        ) : (
+          <TableFrame>
+            <table>
+              <thead>
                 <tr>
-                  <td>RESIDUO</td>
-                  <td>—</td>
-                  <td>tendencia</td>
-                  <td className="pos">SE CONSERVA</td>
+                  <th>Modo</th>
+                  <th className="num">Hurst</th>
+                  <th>Memoria</th>
+                  <th>Destino</th>
+                  <th style={{ width: "50%" }}>Forma</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.imfs.map((imf, i) => (
+                  <tr key={i}>
+                    <td>IMF {i + 1}</td>
+                    <td className="num">{data.hursts[i]?.toFixed(3) ?? "—"}</td>
+                    <td>{data.kept[i] ? "Larga" : "Corta"}</td>
+                    <td>
+                      <Mark tone={data.kept[i] ? "ok" : "danger"}>
+                        {data.kept[i] ? "Se conserva" : "Se descarta"}
+                      </Mark>
+                    </td>
+                    <td>
+                      <Spark series={imf} tone={data.kept[i] ? "long" : "short"} zero />
+                    </td>
+                  </tr>
+                ))}
+                <tr>
+                  <td>Residuo</td>
+                  <td className="num">—</td>
+                  <td>Tendencia</td>
+                  <td>
+                    <Mark tone="ok">Se conserva</Mark>
+                  </td>
                   <td>
                     <Spark
-                      series={data.signal.map((v, i) =>
-                        v - data.imfs.reduce((a, imf, k) => a + (data.kept[k] ? imf[i] : 0), 0))}
-                      color="#60a5fa"
-                      height={40}
+                      series={data.signal.map(
+                        (v, i) =>
+                          v - data.imfs.reduce((a, imf, k) => a + (data.kept[k] ? imf[i] : 0), 0)
+                      )}
+                      tone="accent"
                     />
                   </td>
                 </tr>
-              )}
-            </tbody>
-          </table>
-          {!data?.ok && <div className="empty">Sin descomposición disponible</div>}
-        </div>
-        <div className="hint" style={{ padding: "8px 12px" }}>
-          Los modos con Hurst ≤ 0.5 no tienen memoria: son las &quot;olas&quot; del paper y se
-          eliminan. Los de Hurst &gt; 0.5 conservan su tendencia durante un tiempo
-          —las &quot;mareas&quot;— y se suman junto al residuo para formar la señal.
-        </div>
-      </div>
-    </>
+              </tbody>
+            </table>
+          </TableFrame>
+        )}
+      </Panel>
+    </div>
   );
 }

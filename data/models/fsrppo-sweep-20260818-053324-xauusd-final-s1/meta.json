@@ -1,0 +1,105 @@
+{
+  "run_id": "fsrppo-sweep-20260818-053324-xauusd-final-s1",
+  "created_at": "2026-08-18T05:56:27.620547+00:00",
+  "instrument": "XAU/USD",
+  "timeframe": "h4",
+  "train_range": [
+    "2025-08-28 01:00:00+00:00",
+    "2026-06-08 21:00:00+00:00"
+  ],
+  "test_range": [
+    "2026-06-09 01:00:00+00:00",
+    "2026-08-17 21:00:00+00:00"
+  ],
+  "fsr_params": {
+    "window": 50,
+    "ensemble_size": 20,
+    "noise_scale": 0.2,
+    "n_curves": 2,
+    "delta": 0.001,
+    "delta_mode": "range",
+    "max_iter": 100,
+    "patience": null,
+    "phi": 6,
+    "max_imfs": 12,
+    "hurst_threshold": 0.5,
+    "hurst_v_min": 2,
+    "normalize": true,
+    "seed": 0
+  },
+  "ppo_params": {
+    "gamma": 0.99,
+    "gae_lambda": 1.0,
+    "clip_epsilon": 0.2,
+    "entropy_coef": 0.01,
+    "learning_rate": 0.0001,
+    "hidden_sizes": [
+      256,
+      256
+    ],
+    "iterations": 200,
+    "episodes_per_iteration": 8,
+    "steps_per_episode": 256,
+    "update_epochs": 10,
+    "minibatch_size": 256,
+    "max_grad_norm": 0.5,
+    "seed": 1
+  },
+  "env_params": {
+    "initial_equity": 10000.0,
+    "max_trade_amount": 10000.0,
+    "min_trade_amount": 1000.0,
+    "max_units": 5,
+    "instrument": {
+      "symbol": "XAU/USD",
+      "pip": 0.01,
+      "min_lot": 1,
+      "typical_spread_pips": 35.0,
+      "quote_currency": "USD",
+      "asset_class": "bullion",
+      "digits": 2,
+      "contract_multiplier": 1.0
+    },
+    "min_lot": null,
+    "spread_pips": null,
+    "include_account_features": true,
+    "feature_scale": 26.46279379279627,
+    "ruin_fraction": 0.5
+  },
+  "train_metrics": {
+    "crr": 1.4000280000000027,
+    "arr": 2.1238735470647687,
+    "avr": 0.25908144098121166,
+    "max_drawdown": 0.10789328963640755,
+    "sharpe": 8.09019179114713,
+    "calmar": 19.684945692378705,
+    "sortino": 12.982001349766847,
+    "bars": 1199,
+    "trades": 261
+  },
+  "test_metrics": {
+    "crr": 0.06585299999999952,
+    "arr": 0.39478643302368854,
+    "avr": 0.35236228711243434,
+    "max_drawdown": 0.15111797707130672,
+    "sharpe": 1.041347063644769,
+    "calmar": 2.6124385772938457,
+    "sortino": 1.5242523871548777,
+    "bars": 299,
+    "trades": 105
+  },
+  "benchmark_metrics": {
+    "crr": 0.04038000000000029,
+    "arr": 0.22941176367964355,
+    "avr": 0.5577231122001994,
+    "max_drawdown": 0.19409303518916893,
+    "sharpe": 0.36139216623910153,
+    "calmar": 1.181968036390651,
+    "sortino": 0.525035160508653,
+    "bars": 299,
+    "strategy": "buy_and_hold"
+  },
+  "feature_scale": 26.46279379279627,
+  "data_manifest": {},
+  "notes": ""
+}

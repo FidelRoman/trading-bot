@@ -39,7 +39,7 @@ export function MetricsHead({ first = "ESTRATEGIA", lead, extra }:
         <th>{first}</th>
         {lead?.map((e) => <th key={e}>{e}</th>)}
         {METRIC_COLUMNS.map((c) => (
-          <th key={c.key as string} title={c.title}>
+          <th key={c.key as string} className="num" title={c.title}>
             {c.label}
           </th>
         ))}
@@ -66,7 +66,7 @@ export function MetricsRow({
   highlight?: boolean;
 }) {
   return (
-    <tr style={highlight ? { background: "rgba(74,222,128,.06)" } : undefined}>
+    <tr className={highlight ? "is-marked" : undefined}>
       <td>{name}</td>
       {lead?.map((e, i) => <td key={`lead-${i}`}>{e}</td>)}
       {METRIC_COLUMNS.map((c) => {
@@ -81,7 +81,7 @@ export function MetricsRow({
           cls = mejor ? "pos" : "neg";
         }
         return (
-          <td key={c.key as string} className={cls}>
+          <td key={c.key as string} className={`num ${cls}`}>
             {metricText(value, c.kind)}
           </td>
         );

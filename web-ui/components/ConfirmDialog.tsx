@@ -6,6 +6,8 @@ interface ConfirmDialogProps {
   open: boolean;
   title: string;
   description: React.ReactNode;
+  /** Qué pasa de verdad en esta cuenta. Se muestra aparte, en tinta de aviso. */
+  consequence?: string;
   confirmLabel: string;
   danger?: boolean;
   busy?: boolean;
@@ -17,6 +19,7 @@ export default function ConfirmDialog({
   open,
   title,
   description,
+  consequence,
   confirmLabel,
   danger = false,
   busy = false,
@@ -64,29 +67,38 @@ export default function ConfirmDialog({
     <div className="dialog-backdrop" onMouseDown={() => !busy && onCancel()}>
       <section
         ref={dialogRef}
-        className="confirm-dialog"
+        className={`dialog${danger ? " danger" : ""}`}
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="confirm-title"
         aria-describedby="confirm-description"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <div className={`dialog-mark${danger ? " danger" : ""}`} aria-hidden="true">
-          {danger ? "!" : "i"}
+        <div className="dialog-body">
+          <h2 id="confirm-title">{title}</h2>
+          <div id="confirm-description" className="dialog-copy">
+            {description}
+          </div>
+          {consequence && (
+            <p
+              className="dialog-copy"
+              style={{ marginTop: "var(--s-3)", color: danger ? "var(--short)" : "var(--warn)" }}
+            >
+              {consequence}
+            </p>
+          )}
         </div>
-        <h2 id="confirm-title">{title}</h2>
-        <div id="confirm-description" className="dialog-copy">{description}</div>
         <div className="dialog-actions">
           <button ref={cancelRef} className="btn" type="button" disabled={busy} onClick={onCancel}>
-            CANCELAR
+            Cancelar
           </button>
           <button
-            className={`btn${danger ? " btn-stop" : " btn-start"}`}
+            className={`btn ${danger ? "danger solid" : "primary"}`}
             type="button"
             disabled={busy}
             onClick={onConfirm}
           >
-            {busy ? "PROCESANDO…" : confirmLabel}
+            {busy ? "Procesando…" : confirmLabel}
           </button>
         </div>
       </section>

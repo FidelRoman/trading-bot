@@ -14,6 +14,7 @@ import argparse
 import os
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -23,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tradingbot.backtest import load_csv  # noqa: E402
 from tradingbot.config import PROJECT_ROOT, FsrParams, PpoParams, get_instrument_spec  # noqa: E402
 from tradingbot.rl.dataset import build_dataset  # noqa: E402
-from tradingbot.rl.env import EnvParams  # noqa: E402
+from tradingbot.rl.env import EnvParams, units_for_notional  # noqa: E402
 from tradingbot.rl.registry import ModelRegistry  # noqa: E402
 from tradingbot.rl.train import buy_and_hold, train  # noqa: E402
 
@@ -61,6 +62,12 @@ def main() -> int:
     parser.add_argument("--iterations", type=int, default=PpoParams.iterations)
     parser.add_argument("--learning-rate", type=float, default=PpoParams.learning_rate,
                         help="el 1e-5 del paper no llega a operar en EUR/USD H1; ver README")
+    parser.add_argument("--entropy-coef", type=float, default=PpoParams.entropy_coef,
+                        help="cuanto se paga por explorar; a cero converge pronto y se queda quieto")
+    parser.add_argument("--max-units", type=int, default=None,
+                        help="exposición neta máxima en unidades del instrumento; por defecto, "
+                             "la que da una exposición de ~2:1 sobre el capital al precio de train "
+                             "(20000 asume precio≈1, que en XAU/USD sobreexpone ~3000x)")
     parser.add_argument("-j", "--workers", type=int, default=os.cpu_count())
     parser.add_argument("--activate-best", action="store_true",
                         help="promover a modelo activo el mejor run por Sharpe de test")
@@ -83,7 +90,17 @@ def main() -> int:
     print(f"Test     : {len(evalua):6d} barras  {evalua.timestamps[0]:%Y-%m-%d} → {evalua.timestamps[-1]:%Y-%m-%d}")
 
     spec = get_instrument_spec(args.instrument)
-    env_cfg = EnvParams(instrument=spec)
+    base_env = EnvParams(instrument=spec)
+    # 20000 unidades asume un precio cercano a 1 (EUR/USD): en XAU/USD, a ~$3300,
+    # eso es una exposición de ~66 millones sobre 10000 de capital y el agente
+    # aprende a no operar nunca. Se deriva de la exposición objetivo (~2:1) al
+    # precio real de la ventana de train, como hace select_market.py.
+    max_units = args.max_units or max(
+        spec.min_lot, units_for_notional(2 * base_env.initial_equity, float(entrena.prices[0]), base_env)
+    )
+    env_cfg = replace(base_env, max_units=max_units)
+    print(f"Exposición máxima: {max_units} {spec.symbol.split('/')[0]} "
+          f"(~{max_units * float(entrena.prices[0]):,.0f} USD de nocional)")
     referencia = buy_and_hold(evalua, env_cfg, args.timeframe)
     registro = ModelRegistry()
 
@@ -95,7 +112,7 @@ def main() -> int:
     for semilla in range(args.seeds):
         empezado = time.perf_counter()
         ppo = PpoParams(iterations=args.iterations, seed=semilla,
-                        learning_rate=args.learning_rate)
+                        learning_rate=args.learning_rate, entropy_coef=args.entropy_coef)
         salida = train(
             entrena, evalua,
             fsr_params=fsr, ppo_params=ppo, env_params=env_cfg,

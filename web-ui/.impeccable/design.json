@@ -1,0 +1,178 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-17T22:12:00Z",
+  "title": "Design System: FSRPPO·BOT",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Azul de anotación",
+        "canonical": "#1f4fa8",
+        "tonalRamp": ["#1f4fa8", "#86a9f2"]
+      },
+      "long": {
+        "role": "secondary",
+        "displayName": "Verde de tinta (largo)",
+        "canonical": "#0a6b4a",
+        "tonalRamp": ["#0a6b4a", "#3fce8c"]
+      },
+      "short": {
+        "role": "secondary",
+        "displayName": "Rojo de tinta (corto)",
+        "canonical": "#ae2a20",
+        "tonalRamp": ["#ae2a20", "#ff6f62"]
+      },
+      "warn": {
+        "role": "tertiary",
+        "displayName": "Ámbar de aviso",
+        "canonical": "#8a5a00",
+        "tonalRamp": ["#8a5a00", "#f0b429"]
+      },
+      "ground": {
+        "role": "neutral",
+        "displayName": "Papel / Pantalla",
+        "canonical": "#efece4",
+        "tonalRamp": ["#efece4", "#f8f6f1", "#e9e5db", "#0b0d0f", "#121517", "#191d20"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Tinta",
+        "canonical": "#14171a",
+        "tonalRamp": ["#14171a", "#45494f", "#5f646a", "#e9e6de", "#a8adb3", "#8a9098"]
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Filete",
+        "canonical": "#cbc5b8",
+        "tonalRamp": ["#ded8cc", "#cbc5b8", "#a9a296", "#1c2023", "#272c31", "#3a4046"]
+      }
+    },
+    "typographyMeta": {
+      "lede": { "displayName": "Lede", "purpose": "El precio vivo del instrumento, y solo eso. Titular de la lámina a 40px." },
+      "headline": { "displayName": "Headline", "purpose": "El h1 de la banda y el título de diálogo." },
+      "readout": { "displayName": "Readout", "purpose": "El valor de cualquier lectura de eje." },
+      "body": { "displayName": "Body", "purpose": "Prosa de interfaz a 14px." },
+      "data": { "displayName": "Data", "purpose": "Tablas, controles y campos a 13px." },
+      "eje": { "displayName": "Eje", "purpose": "Rótulos de eje, cabeceras de tabla y rótulos de campo. Único sitio con versalitas y letter-spacing." },
+      "log": { "displayName": "Log", "purpose": "Registro del sistema, run ids, datasets y volcados. La única monoespaciada." }
+    },
+    "shadows": [
+      {
+        "name": "ninguna",
+        "value": "none",
+        "purpose": "El sistema no usa sombras. La elevación se declara una vez y con filete de 1px. Única excepción: el telón del diálogo, rgba(0,0,0,0.55), que no es una sombra sino un fondo."
+      }
+    ],
+    "motion": [
+      { "name": "ease", "value": "cubic-bezier(0.2, 0.8, 0.3, 1)", "purpose": "Easing único de todo cambio de estado." },
+      { "name": "dur-1", "value": "120ms", "purpose": "Hover, foco, cambio de color, alcance." },
+      { "name": "dur-2", "value": "180ms", "purpose": "Cambio de fondo por territorio, medidores, entrada de toast." },
+      { "name": "pulse", "value": "2s infinite", "purpose": "El punto de una marca viva. Es la única animación en bucle del sistema." }
+    ],
+    "breakpoints": [
+      { "name": "plate", "value": "1180px" },
+      { "name": "rail", "value": "860px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "El bloque de figura: filete, rótulo, cuerpo y pie explicativo. Sin sombra y sin radio.",
+      "html": "<section class=\"ds-panel\"><div class=\"ds-panel-head\"><h2 class=\"ds-panel-label\">Posiciones abiertas <span class=\"ds-panel-count\">· 2</span></h2></div><div class=\"ds-panel-body\">…</div><div class=\"ds-panel-caption\"><p>El pie explicativo va aquí, acotado a 74ch.</p></div></section>",
+      "css": ".ds-panel { background: #f8f6f1; border: 1px solid #cbc5b8; border-radius: 0; display: flex; flex-direction: column; } .ds-panel-head { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #ded8cc; } .ds-panel-label { font: 600 0.6875rem/1.4 'Libre Franklin', system-ui, sans-serif; letter-spacing: 0.06em; text-transform: uppercase; color: #45494f; } .ds-panel-count { color: #5f646a; font-weight: 400; } .ds-panel-body { padding: 16px; } .ds-panel-caption { padding: 12px 16px; border-top: 1px solid #ded8cc; font-size: 0.75rem; line-height: 1.6; color: #45494f; } .ds-panel-caption > * { max-width: 74ch; }"
+    },
+    {
+      "name": "Botón primario",
+      "kind": "button",
+      "refersTo": "btn-primary",
+      "description": "Una sola acción primaria por panel. Rectángulo exacto, sin radio.",
+      "html": "<button class=\"ds-btn ds-btn-primary\">Guardar parámetros</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 30px; padding: 0 12px; font: 600 0.8125rem/1.6 'Libre Franklin', system-ui, sans-serif; color: #14171a; background: #f8f6f1; border: 1px solid #a9a296; border-radius: 0; transition: background 120ms cubic-bezier(0.2,0.8,0.3,1); } .ds-btn-primary { color: #f8f6f1; background: #1f4fa8; border-color: #1f4fa8; } .ds-btn-primary:hover { filter: brightness(1.08); } .ds-btn:focus-visible { outline: 2px solid #1f4fa8; outline-offset: 1px; } .ds-btn:disabled { opacity: 0.45; cursor: not-allowed; }"
+    },
+    {
+      "name": "Lectura de eje",
+      "kind": "custom",
+      "refersTo": "readout",
+      "description": "La única forma de presentar una cifra: rótulo de eje, valor tabular, nota.",
+      "html": "<div class=\"ds-readout\"><span class=\"ds-readout-label\">P&amp;L del día</span><span class=\"ds-readout-value ds-num ds-neg\">−$1,88</span><span class=\"ds-readout-note\">0 de 4 operaciones</span></div>",
+      "css": ".ds-readout { display: flex; flex-direction: column; gap: 2px; } .ds-readout-label { font: 400 0.6875rem/1.4 'Libre Franklin', system-ui, sans-serif; letter-spacing: 0.06em; text-transform: uppercase; color: #5f646a; white-space: nowrap; } .ds-readout-value { font: 600 1rem/1.2 'Libre Franklin', system-ui, sans-serif; letter-spacing: -0.01em; } .ds-num { font-variant-numeric: tabular-nums slashed-zero; } .ds-neg { color: #ae2a20; } .ds-readout-note { font-size: 0.75rem; color: #5f646a; }"
+    },
+    {
+      "name": "Marca de estado",
+      "kind": "chip",
+      "refersTo": "mark",
+      "description": "Familia única para modo de cuenta, conexión y estado del motor. El punto late solo cuando algo está vivo.",
+      "html": "<span class=\"ds-mark ds-mark-ok ds-mark-live\"><span class=\"ds-dot\"></span>Operando</span>",
+      "css": ".ds-mark { display: inline-flex; align-items: center; gap: 8px; padding: 2px 8px; font: 600 0.6875rem/1.4 'Libre Franklin', system-ui, sans-serif; letter-spacing: 0.06em; text-transform: uppercase; color: #45494f; border: 1px solid #a9a296; border-radius: 0; white-space: nowrap; } .ds-mark-ok { color: #0a6b4a; border-color: #0a6b4a; background: rgba(10,107,74,0.1); } .ds-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; } .ds-mark-live .ds-dot { animation: ds-pulse 2s cubic-bezier(0.2,0.8,0.3,1) infinite; } @keyframes ds-pulse { 50% { opacity: 0.25; } }"
+    },
+    {
+      "name": "Aviso",
+      "kind": "custom",
+      "refersTo": "notice",
+      "description": "Un solo patrón en cuatro tonos. Sin barra lateral y sin icono: el borde y el lavado llevan el tono.",
+      "html": "<div class=\"ds-notice ds-notice-danger\" role=\"alert\"><div><strong>No se puede cambiar de instrumento.</strong> Cierra la posición abierta antes de cambiar.</div></div>",
+      "css": ".ds-notice { display: flex; gap: 12px; padding: 12px 16px; font-size: 0.75rem; line-height: 1.6; color: #14171a; background: #f8f6f1; border: 1px solid #a9a296; border-radius: 0; } .ds-notice-danger { border-color: #ae2a20; background: rgba(174,42,32,0.1); } .ds-notice strong { font-weight: 600; }"
+    },
+    {
+      "name": "Campo",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Rótulo de eje, control hundido, y nota que dice qué implica el número.",
+      "html": "<div class=\"ds-field\"><label class=\"ds-field-label\" for=\"riesgo\">Riesgo por operación (%)</label><input class=\"ds-input\" id=\"riesgo\" type=\"number\" value=\"0.5\"><span class=\"ds-field-note\">Cada operación arriesga unos $50 con el capital actual.</span></div>",
+      "css": ".ds-field { display: flex; flex-direction: column; gap: 4px; } .ds-field-label { font: 400 0.6875rem/1.4 'Libre Franklin', system-ui, sans-serif; letter-spacing: 0.06em; text-transform: uppercase; color: #5f646a; } .ds-input { width: 100%; min-height: 30px; padding: 0 8px; font: 500 0.8125rem/1.6 'Libre Franklin', system-ui, sans-serif; color: #14171a; background: #e9e5db; border: 1px solid #a9a296; border-radius: 0; } .ds-input:focus { border-color: #1f4fa8; outline: 2px solid #1f4fa8; outline-offset: 1px; } .ds-field-note { font-size: 0.75rem; line-height: 1.4; color: #5f646a; }"
+    },
+    {
+      "name": "Alcance",
+      "kind": "custom",
+      "refersTo": "reach",
+      "description": "Un control consecuente resalta lo que va a afectar antes de accionarse. Dos claves vivas: positions y engine.",
+      "html": "<button class=\"ds-btn ds-btn-danger\" data-reach=\"positions\">Cerrar todas</button>\n<div data-reach-target=\"positions\">…lista de posiciones…</div>",
+      "css": "[data-reach-target] { transition: box-shadow 120ms cubic-bezier(0.2,0.8,0.3,1), background 120ms cubic-bezier(0.2,0.8,0.3,1); } html[data-reaching=\"positions\"] [data-reach-target=\"positions\"], html[data-reaching=\"engine\"] [data-reach-target=\"engine\"] { box-shadow: inset 0 0 0 1px #ae2a20; background: rgba(174,42,32,0.1); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "La Lámina",
+    "overview": "La consola es la lámina viva del paper que este bot implementa. No es un panel de trading con tarjetas: es una figura de publicación científica que se actualiza sola. De ahí sale toda la gramática —filetes de un píxel, paneles rotulados que cierran con su pie explicativo, ejes con su lectura, cifras tabulares— y de ahí sale también lo que la interfaz se niega a ser: el cuadro de mandos oscuro con velas de neón, tarjetas flotantes y cristal esmerilado que envía por defecto esta categoría.\n\nLa lámina tiene dos soportes, y ninguno es el modo por defecto del otro. En claro es la lámina impresa: papel cálido, tinta casi negra, filetes de tinta gris. En oscuro es la misma lámina en la pantalla del instrumento. El sistema decide cuál mostrar, y la elección explícita del operador manda sobre él.\n\nLa escena manda sobre la expresión. Un operador solo vigila esta pestaña durante horas y trabaja dentro de ella a ratos, con dinero real en juego. Por eso la densidad es alta y el color no decora nunca, y por eso el territorio de cuenta no vive en una insignia sino en el fondo de la página entera.",
+    "keyCharacteristics": [
+      "Filete de 1px como única declaración de elevación; cero sombras de reposo.",
+      "Radio cero en todo contenedor y todo control.",
+      "Una sola retícula de 4px, sin medios valores.",
+      "Cifras tabulares con cero barrado en toda la interfaz.",
+      "Monoespaciada reservada a registro, identificadores de run y nombres de dataset.",
+      "El fondo de la página dice en qué cuenta estás, en todos los anchos."
+    ],
+    "rules": [
+      { "name": "La regla del territorio", "body": "El modo de cuenta tiñe el fondo de la página entera: simulado deja el papel neutro, demo lo vuelve azulado y real lo vuelve rojizo, además de promover el filete y poner una regla roja sobre la banda. Ninguna insignia puede ser el único portador de esa señal, en ningún ancho.", "section": "colors" },
+      { "name": "La regla de la tinta de señal", "body": "Verde y rojo significan dirección o resultado, nunca jerarquía ni decoración.", "section": "colors" },
+      { "name": "La regla del lavado", "body": "Cada tinta de señal tiene su lavado al 10-13% para fondos. La saturación plena solo aparece en el botón de confirmación destructiva.", "section": "colors" },
+      { "name": "La regla de la cifra tabular", "body": "tabular-nums y slashed-zero van en body y se heredan: ninguna cifra viva baila al actualizarse.", "section": "typography" },
+      { "name": "La regla de la voz única", "body": "El precio vivo se compone a 40px y nada compite con él; el siguiente escalón es el h1 de 19px.", "section": "typography" },
+      { "name": "La regla de la versalita", "body": "Mayúsculas y letter-spacing existen solo en el escalón eje, a 11px. Un título o un botón en mayúsculas es un error del sistema.", "section": "typography" },
+      { "name": "La regla del filete único", "body": "Un borde de 1px o una sombra, nunca los dos. Un panel con borde y sombra difusa es la tarjeta fantasma que este mundo rechaza.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do declarar la elevación una sola vez y con filete de 1px.",
+      "Do poner toda medida en la escala de 4px y todo filete a exactamente 1px.",
+      "Do usar .num en cualquier columna o valor numérico.",
+      "Do cerrar cada panel que necesite explicación con su pie de figura.",
+      "Do dar a cada campo una nota que diga qué implica el número.",
+      "Do derivar los colores de gráfico de los tokens del documento.",
+      "Do escribir estados de carga y vacíos que enseñen la interfaz.",
+      "Do dejar que el fondo de la página lleve el territorio de cuenta."
+    ],
+    "donts": [
+      "Don't añadir box-shadow a un panel, una tarjeta o un aviso.",
+      "Don't poner radio a nada que no sea el punto de señal de 6px.",
+      "Don't componer títulos, botones ni frases en mayúsculas.",
+      "Don't usar la monoespaciada como disfraz de técnico.",
+      "Don't usar verde o rojo para nada que no sea dirección o resultado.",
+      "Don't poner una barra de color de más de 1px a la izquierda de una tarjeta, un aviso o un elemento de lista.",
+      "Don't usar un glifo unicode como icono.",
+      "Don't aplicar objetivos táctiles de 44px en escritorio.",
+      "Don't dejar que el modo de cuenta dependa de una insignia, ni ocultarlo al estrechar.",
+      "Don't escribir un style inline con color, tamaño de fuente o espaciado que no venga de un token."
+    ]
+  }
+}

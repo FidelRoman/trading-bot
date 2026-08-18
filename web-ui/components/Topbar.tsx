@@ -1,9 +1,18 @@
 "use client";
+/* La banda de estado: qué página, en qué cuenta, con qué instrumento, en qué
+   estado el motor, y el mando para arrancarlo o pararlo. Antes esto vivía
+   repartido entre cuatro indicadores que decían casi lo mismo. */
 
 import { useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 import ConfirmDialog from "./ConfirmDialog";
+import Icon from "./ui/Icon";
+import Mark from "./ui/Mark";
+import ThemeToggle from "./ui/ThemeToggle";
+import { useReach } from "./ui/reach";
+import { useToast } from "./ui/Toast";
 import { postJSON } from "@/lib/api";
+import { readAccount, readEngine } from "@/lib/account";
 import { useLive } from "@/lib/live";
 import type { Status } from "@/lib/types";
 
@@ -21,36 +30,41 @@ const PAGE_TITLES: Record<string, string> = {
 export default function Topbar() {
   const { status, refreshStatus } = useLive();
   const pathname = usePathname();
+  const { push } = useToast();
   const [pendingRun, setPendingRun] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
-  const isWeekendClosed = status?.market_open === false && !status?.connected;
-  const isOn = !!status && !status.paused;
-  const label = status?.halted_today
-    ? "LÍMITE DIARIO"
-    : isWeekendClosed
-    ? "MERCADO CERRADO"
-    : status?.paused
-    ? "PAUSADO"
-    : "OPERANDO";
-  const connection = status?.account?.connection ?? "";
-  const real = Boolean(status?.live_execution && (connection === "Real" || status?.mode.includes("real")));
-  const demo = Boolean(status?.live_execution && !real);
-  const accountLabel = real ? "CUENTA REAL" : demo ? "CUENTA DEMO" : "SIMULADO";
-  const accountTone = real ? "real" : demo ? "demo" : "sim";
-  const pageTitle = PAGE_TITLES[pathname] ?? "FX Command Center";
+  const stopReach = useReach("engine");
+
+  const account = readAccount(status);
+  const engine = readEngine(status);
+  const real = account.kind === "real";
+  const pageTitle = PAGE_TITLES[pathname] ?? "Operación";
+
   const dialogCopy = useMemo(() => {
     if (pendingRun) {
-      return real
-        ? <>El bot enviará órdenes a <strong>dinero real</strong> en {status?.instrument ?? "el instrumento seleccionado"}. Revisa estrategia, riesgo y posiciones antes de continuar.</>
-        : <>El bot comenzará a evaluar y ejecutar la estrategia en <strong>{accountLabel.toLowerCase()}</strong>.</>;
+      return real ? (
+        <>
+          El bot enviará órdenes a <strong>dinero real</strong> en{" "}
+          {status?.instrument ?? "el instrumento seleccionado"}. Revisa estrategia, riesgo y
+          posiciones antes de continuar.
+        </>
+      ) : (
+        <>
+          El bot comenzará a evaluar y ejecutar la estrategia en{" "}
+          <strong>{account.label.toLowerCase()}</strong>.
+        </>
+      );
     }
-    return <>El bot dejará de abrir nuevas operaciones. Las posiciones existentes no se cerrarán automáticamente.</>;
-  }, [pendingRun, real, status?.instrument, accountLabel]);
+    return (
+      <>
+        El bot dejará de abrir nuevas operaciones. Las posiciones existentes no se cerrarán
+        automáticamente.
+      </>
+    );
+  }, [pendingRun, real, status?.instrument, account.label]);
 
   async function setRunning(run: boolean) {
     setBusy(true);
-    setMessage("");
     try {
       const result = await postJSON<{ ok: boolean; error?: string; status: Status }>(
         `/api/control/${run ? "resume" : "pause"}`,
@@ -58,43 +72,83 @@ export default function Topbar() {
       );
       if (!result.ok) throw new Error(result.error || "No se pudo cambiar el estado del bot.");
       await refreshStatus();
-      setMessage(run ? "Bot iniciado." : "Bot detenido: no se abrirán nuevas operaciones.");
+      push(
+        run ? "Bot iniciado." : "Bot detenido: no se abrirán nuevas operaciones.",
+        run ? "ok" : "warn"
+      );
       setPendingRun(null);
     } catch (cause) {
-      setMessage(cause instanceof Error ? cause.message : "No se pudo cambiar el estado del bot.");
+      push(
+        cause instanceof Error ? cause.message : "No se pudo cambiar el estado del bot.",
+        "danger"
+      );
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <header className="topbar">
-      <div className="topbar-heading">
-        <span className="topbar-kicker">FX COMMAND CENTER</span>
-        <h1 className="app-title">{pageTitle}</h1>
+    <header className="band">
+      <div className="band-title">
+        <h1>{pageTitle}</h1>
       </div>
-      <div className="top-actions">
-        <span className={`account-pill ${accountTone}`}>
-          <span>{accountLabel}</span>
-          <strong>{status?.instrument ?? "—"}</strong>
-        </span>
-        <span className={`pill${isOn && !status?.halted_today ? "" : " paused"}`} role="status" aria-live="polite">
-          <span className="dot" />
-          <span>{status ? label : "…"}</span>
-        </span>
-        <button className="btn btn-start" disabled={!status || isOn || busy} onClick={() => setPendingRun(true)}>
-          INICIAR BOT
-        </button>
-        <button className="btn btn-stop" disabled={!status || !isOn || busy} onClick={() => setPendingRun(false)}>
-          DETENER BOT
-        </button>
+
+      <div className="band-readouts">
+        {/* En móvil el raíl muestra la cuenta justo encima: no se repite. */}
+        <div className="readout readout-account">
+          <span className="readout-label">Cuenta</span>
+          <span className="readout-value" style={{ fontSize: "var(--fs-sm)" }}>
+            <Mark
+              tone={
+                account.tone === "danger" ? "danger" : account.tone === "info" ? "info" : "warn"
+              }
+            >
+              {account.label}
+            </Mark>
+          </span>
+        </div>
+        <div className="readout">
+          <span className="readout-label">Instrumento</span>
+          <span className="readout-value">{status?.instrument ?? "—"}</span>
+        </div>
+        {/* Lo que «Detener bot» apaga: se resalta al apuntar al control. */}
+        <div className="readout" data-reach-target="engine">
+          <span className="readout-label">Motor</span>
+          <span className="readout-value" style={{ fontSize: "var(--fs-sm)" }}>
+            <Mark tone={engine.tone} dot live={engine.running}>
+              {engine.label}
+            </Mark>
+          </span>
+        </div>
       </div>
-      {message && <div className="topbar-message" role="status" aria-live="polite">{message}</div>}
+
+      <div className="band-actions">
+        <button
+          className="btn primary"
+          disabled={!status || engine.running || busy}
+          onClick={() => setPendingRun(true)}
+        >
+          <Icon name="play" size={13} />
+          Iniciar bot
+        </button>
+        <button
+          className="btn danger"
+          disabled={!status || !engine.running || busy}
+          onClick={() => setPendingRun(false)}
+          {...stopReach}
+        >
+          <Icon name="pause" size={13} />
+          Detener bot
+        </button>
+        <ThemeToggle />
+      </div>
+
       <ConfirmDialog
         open={pendingRun !== null}
-        title={pendingRun ? (real ? "Iniciar en cuenta Real" : "Iniciar bot") : "Detener bot"}
+        title={pendingRun ? (real ? "Iniciar en cuenta real" : "Iniciar bot") : "Detener bot"}
         description={dialogCopy}
-        confirmLabel={pendingRun ? (real ? "INICIAR EN REAL" : "INICIAR") : "DETENER"}
+        consequence={pendingRun ? account.consequence : undefined}
+        confirmLabel={pendingRun ? (real ? "Iniciar en real" : "Iniciar") : "Detener"}
         danger={real || pendingRun === false}
         busy={busy}
         onCancel={() => setPendingRun(null)}

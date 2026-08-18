@@ -204,18 +204,23 @@ despierta (de ahí `caffeinate -s`).
 
 ### Acceso desde otro dispositivo
 
-El backend **no autentica**: quien alcanza el puerto puede ver la cuenta y mandar
-órdenes. Por eso escucha solo en `127.0.0.1` y el acceso remoto va por
-[Tailscale](https://tailscale.com), que es una red privada entre tus máquinas:
+El acceso remoto va por [Tailscale](https://tailscale.com), una red privada entre
+tus máquinas:
 
 ```bash
-tailscale serve --bg 8000
+caffeinate -s uv run uvicorn tradingbot.web.app:app --host 0.0.0.0 --port 8000 \
+  --proxy-headers --forwarded-allow-ips="*"
 ```
 
-Eso publica el panel en `https://<máquina>.<tailnet>.ts.net/` **solo para tus
-dispositivos**, sin exponerlo a la red local ni a Internet. Requiere activar los
-certificados HTTPS del tailnet en el panel de Tailscale. El WebSocket viaja por
-el mismo origen, así que no hay nada más que configurar.
+Desde cualquier dispositivo con Tailscale conectado, `http://<ip-tailscale>:8000`
+(`tailscale status --self --peers=false` da la IP). El WebSocket viaja por el
+mismo origen: no hay nada más que configurar.
+
+El backend **no autentica**, así que `0.0.0.0` deja el panel y las órdenes al
+alcance de cualquiera en la wifi local, no solo de la tailnet. Para cerrar esa
+mitad: `--host <ip-tailscale>` escucha solo en la interfaz de Tailscale, o
+`tailscale serve --bg 8000` con uvicorn en `127.0.0.1`. Detalles en
+[`docs/local.md`](docs/local.md).
 
 `./scripts/tunnel.sh` (Cloudflare) sigue existiendo, pero publica en **Internet**
 y sin token deja las órdenes al alcance de cualquiera que dé con la URL: pide una
@@ -232,6 +237,6 @@ caliente (`npm run dev`): [`docs/local.md`](docs/local.md).
   backtest.
 - El servidor **no autentica** `/api/*` ni `/ws`: cualquiera que alcance el
   puerto puede consultar la cuenta y enviar órdenes. Es una decisión deliberada
-  para el uso local, y depende de que el puerto solo sea alcanzable desde
-  `localhost` y desde tu tailnet. No lo publiques en Internet sin poner delante
-  autenticación.
+  para el uso local, y toda la protección consiste en desde dónde se puede
+  alcanzar el puerto — de ahí que importe con qué `--host` arranques. No lo
+  publiques en Internet sin poner delante autenticación.
