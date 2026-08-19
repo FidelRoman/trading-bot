@@ -112,3 +112,5 @@ INFO:     100.98.152.29:50876 - "HEAD /strategies/ HTTP/1.1" 200 OK
 INFO:     100.98.152.29:50877 - "HEAD /settings/ HTTP/1.1" 200 OK
 INFO:     100.98.152.29:50872 - "HEAD /models/ HTTP/1.1" 200 OK
 INFO:     100.98.152.29:50871 - "GET /api/candles?count=200&tf=m15 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50886 - "GET /api/status HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50886 - "GET /api/positions HTTP/1.1" 200 OK
