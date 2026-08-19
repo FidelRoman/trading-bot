@@ -34,3 +34,47 @@ export const signedMoney = (n: number | null | undefined): string => {
 
 export const isoShort = (iso: string | null | undefined): string =>
   iso ? iso.slice(0, 16).replace("T", " ") : "—";
+
+/** Información direccional con signo explícito: "+ COMPRA ▲" / "− VENTA ▼" */
+export interface DirectionSign {
+  side: "long" | "short";
+  text: string;
+  sign: "+" | "−";
+  arrow: "▲" | "▼";
+  fullLabel: string;
+  tone: "pos" | "neg";
+  markClass: string;
+}
+
+export const getDirectionSign = (side?: "long" | "short" | string | null): DirectionSign => {
+  const isLong = side === "long" || side === "buy";
+  return {
+    side: isLong ? "long" : "short",
+    text: isLong ? "Compra" : "Venta",
+    sign: isLong ? "+" : "−",
+    arrow: isLong ? "▲" : "▼",
+    fullLabel: isLong ? "+ COMPRA ▲" : "− VENTA ▼",
+    tone: isLong ? "pos" : "neg",
+    markClass: isLong ? "ok" : "danger",
+  };
+};
+
+/** Unidades con signo de dirección: "+10.000" / "−10.000" */
+export const signedUnits = (
+  units: number | null | undefined,
+  side?: "long" | "short" | string | null,
+  d = 0
+): string => {
+  if (units == null) return "—";
+  const isLong = side === "long" || side === "buy";
+  const mark = isLong ? "+" : "−";
+  return `${mark}${fmt(Math.abs(units), d)}`;
+};
+
+/** Pips con signo explícito: "+14.2" / "−8.5" */
+export const signedPips = (pips: number | null | undefined, suffix = " pips", d = 1): string => {
+  if (pips == null) return "—";
+  const val = zero(Number(pips), d);
+  const mark = val > 0 ? "+" : val < 0 ? "−" : "";
+  return `${mark}${fmt(Math.abs(val), d)}${suffix}`;
+};

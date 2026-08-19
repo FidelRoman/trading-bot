@@ -22,7 +22,7 @@ import Skeleton from "@/components/ui/Skeleton";
 import { TableFrame } from "@/components/ui/Table";
 import { useToast } from "@/components/ui/Toast";
 import { apiFetch, getJSON, postJSON } from "@/lib/api";
-import { fmt, fmtPx, isoShort, sign } from "@/lib/format";
+import { fmt, fmtPx, isoShort, sign, signedMoney, signedPips, signedUnits } from "@/lib/format";
 import { useLive } from "@/lib/live";
 import type { BacktestState, BotSettings } from "@/lib/types";
 
@@ -733,11 +733,11 @@ function SimulationResult({
             <table>
               <thead>
                 <tr>
-                  <th>Dirección</th>
-                  <th className="num">Unidades</th>
+                  <th>Operación</th>
+                  <th className="num">Posición</th>
                   <th className="num">Entrada</th>
                   <th className="num">Salida</th>
-                  <th className="num">Pips</th>
+                  <th className="num">Pips / Pts</th>
                   <th className="num">P&L</th>
                   <th>Motivo</th>
                   <th>Fecha</th>
@@ -747,20 +747,54 @@ function SimulationResult({
                 {(state.trades ?? [])
                   .slice()
                   .reverse()
-                  .map((t, i) => (
-                    <tr key={i}>
-                      <td className={t.side === "long" ? "pos" : "neg"}>
-                        {t.side === "long" ? "Compra" : "Venta"}
-                      </td>
-                      <td className="num">{fmt(t.units, 0)}</td>
-                      <td className="num">{fmtPx(t.entry)}</td>
-                      <td className="num">{fmtPx(t.exit)}</td>
-                      <td className={`num ${(t.pnl ?? 0) >= 0 ? "pos" : "neg"}`}>{fmt(t.pips, 1)}</td>
-                      <td className={`num ${(t.pnl ?? 0) >= 0 ? "pos" : "neg"}`}>{sign(t.pnl)}</td>
-                      <td>{t.reason ?? "—"}</td>
-                      <td>{isoShort(t.exit_time)}</td>
-                    </tr>
-                  ))}
+                  .map((t, i) => {
+                    const isLong = t.side === "long";
+                    return (
+                      <tr key={i}>
+                        <td>
+                          <span
+                            className={`mark ${isLong ? "ok" : "danger"}`}
+                            style={{ fontWeight: 700, letterSpacing: "0.04em" }}
+                          >
+                            <span className="dot" />
+                            {isLong ? "+ COMPRA ▲" : "− VENTA ▼"}
+                          </span>
+                        </td>
+                        <td className={`num ${isLong ? "pos" : "neg"}`}>
+                          <strong>{signedUnits(t.units, t.side, 0)}</strong>
+                        </td>
+                        <td className="num">{fmtPx(t.entry)}</td>
+                        <td className="num">{fmtPx(t.exit)}</td>
+                        <td className={`num ${(t.pnl ?? 0) >= 0 ? "pos" : "neg"}`}>
+                          {signedPips(t.pips, " pips", 1)}
+                        </td>
+                        <td
+                          className={`num ${(t.pnl ?? 0) >= 0 ? "pos" : "neg"}`}
+                          style={{ fontWeight: 700 }}
+                        >
+                          {signedMoney(t.pnl)}
+                        </td>
+                        <td>
+                          <span
+                            style={{
+                              display: "inline-block",
+                              padding: "1px 6px",
+                              fontSize: "var(--fs-eje)",
+                              fontWeight: 600,
+                              letterSpacing: "0.04em",
+                              textTransform: "uppercase",
+                              background: "var(--panel-inset)",
+                              border: "1px solid var(--rule-faint)",
+                              color: "var(--ink-2)",
+                            }}
+                          >
+                            {t.reason ? t.reason.toUpperCase() : "CIERRE"}
+                          </span>
+                        </td>
+                        <td>{isoShort(t.exit_time)}</td>
+                      </tr>
+                    );
+                  })}
               </tbody>
             </table>
           </TableFrame>

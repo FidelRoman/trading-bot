@@ -9,12 +9,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { getJSON, postJSON } from "@/lib/api";
 import { MetricsHead, MetricsRow } from "@/components/metrics";
+import AssetBadge from "@/components/ui/AssetBadge";
 import EmptyState from "@/components/ui/EmptyState";
 import Mark from "@/components/ui/Mark";
 import Notice from "@/components/ui/Notice";
 import { Panel } from "@/components/ui/Panel";
 import { TableFrame } from "@/components/ui/Table";
 import { useToast } from "@/components/ui/Toast";
+import { getAssetBadgeInfo } from "@/lib/instruments";
 import { useLive } from "@/lib/live";
 import type { InstrumentSpec, TrainingCurvePoint, TrainingState } from "@/lib/types";
 
@@ -347,15 +349,22 @@ export default function TrainPage() {
                 onChange={(e) => setInstrumento(e.target.value)}
               >
                 {!instrumentos.some((i) => i.symbol === instrumento) && instrumento && (
-                  <option value={instrumento}>{instrumento}</option>
-                )}
-                {instrumentos.map((i) => (
-                  <option key={i.symbol} value={i.symbol}>
-                    {i.symbol}
+                  <option value={instrumento}>
+                    [{getAssetBadgeInfo(instrumento).tag}] {instrumento}
                   </option>
-                ))}
+                )}
+                {instrumentos.map((i) => {
+                  const tag = getAssetBadgeInfo(i.symbol, i.asset_class).tag;
+                  return (
+                    <option key={i.symbol} value={i.symbol}>
+                      [{tag}] {i.symbol}
+                    </option>
+                  );
+                })}
               </select>
-              <span className="field-note">El modelo queda ligado a este símbolo.</span>
+              <div style={{ marginTop: "var(--s-1)", display: "flex", alignItems: "center", gap: "var(--s-2)" }}>
+                <AssetBadge symbol={instrumento} size="sm" showType={true} />
+              </div>
             </div>
             <div className="field">
               <label className="field-label" htmlFor="timeframe">

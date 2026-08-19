@@ -7,24 +7,26 @@
    el modelo, porque las tres cosas son la misma pregunta —qué opera el bot—. */
 
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import AssetBadge from "./ui/AssetBadge";
 import ConfirmDialog from "./ConfirmDialog";
 import Icon from "./ui/Icon";
 import Notice from "./ui/Notice";
 import { useReach } from "./ui/reach";
 import { useToast } from "./ui/Toast";
 import { getJSON, postJSON } from "@/lib/api";
+import { getAssetBadgeInfo, getAssetCategory } from "@/lib/instruments";
 import { useLive } from "@/lib/live";
 import type { CatalogEntry, CurrentInstrument, InstrumentCatalog } from "@/lib/types";
 
 const CLASS_LABELS: Record<string, string> = {
-  forex: "Divisas",
-  bullion: "Metales",
-  commodity: "Materias primas",
-  index: "Índices",
-  treasury: "Deuda",
-  crypto: "Cripto",
-  share: "Acciones",
-  other: "Otros",
+  forex: "Divisas (Forex)",
+  bullion: "CFD Metales (Oro / Plata)",
+  commodity: "CFD Materias primas (Petróleo / Gas)",
+  index: "CFD Índices bursátiles (US30 / NAS100 / GER40)",
+  treasury: "CFD Renta Fija / Bonos",
+  crypto: "Criptomonedas (24/7)",
+  share: "Acciones al contado (Stocks)",
+  other: "Otros contratos",
 };
 
 const CLASS_ORDER = ["forex", "bullion", "commodity", "index", "treasury", "crypto", "share", "other"];
@@ -218,36 +220,51 @@ export default function InstrumentPicker() {
       >
         {/* El activo puede quedar fuera del filtro; se mantiene visible. */}
         {!grouped.some((g) => g.items.some((i) => i.symbol === symbol)) && (
-          <option value={symbol}>{symbol}</option>
+          <option value={symbol}>
+            [{getAssetBadgeInfo(symbol, status?.asset_class).tag}] {symbol}
+          </option>
         )}
         {grouped.map((group) => (
           <optgroup key={group.key} label={group.label}>
-            {group.items.map((item) => (
-              <option key={item.symbol} value={item.symbol}>
-                {item.symbol}
-                {item.tradable ? "" : " — no operable"}
-              </option>
-            ))}
+            {group.items.map((item) => {
+              const info = getAssetBadgeInfo(item.symbol, item.asset_class);
+              return (
+                <option key={item.symbol} value={item.symbol}>
+                  [{info.tag}] {item.symbol}
+                  {item.tradable ? "" : " — no operable"}
+                </option>
+              );
+            })}
           </optgroup>
         ))}
       </select>
 
-      <div className="field-note">
-        {current && (
-          <div>
-            {CLASS_LABELS[current.asset_class] ?? current.asset_class} · pip {current.pip} · mín{" "}
-            {current.min_lot} · 1 lote = {current.lot_size} uds
-          </div>
-        )}
-        {current && current.subscription_status !== "T" && (
-          <div className="neg">Estado «{current.subscription_status}»: no operable todavía</div>
-        )}
-        {truncated && <div>Catálogo recortado: hay más instrumentos de los que caben</div>}
-        {current?.catalog_updated_at ? (
-          <div>Catálogo leído el {current.catalog_updated_at.slice(0, 16).replace("T", " ")}</div>
-        ) : (
-          <div>Catálogo sin descubrir — pulsa «Actualizar catálogo»</div>
-        )}
+      <div style={{ marginTop: "var(--s-1)", display: "flex", flexDirection: "column", gap: "var(--s-2)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--s-2)", flexWrap: "wrap" }}>
+          <AssetBadge
+            symbol={symbol}
+            assetClass={current?.asset_class ?? status?.asset_class}
+            size="sm"
+            showType={true}
+          />
+        </div>
+        <div className="field-note">
+          {current && (
+            <div>
+              {CLASS_LABELS[current.asset_class] ?? current.asset_class} · pip {current.pip} · mín{" "}
+              {current.min_lot} · {current.asset_class === "share" ? "1 acción = 1 título" : current.asset_class === "forex" ? `1 lote = ${current.lot_size.toLocaleString()} uds` : `1 contrato CFD = ${current.lot_size} ud`}
+            </div>
+          )}
+          {current && current.subscription_status !== "T" && (
+            <div className="neg">Estado «{current.subscription_status}»: no operable todavía</div>
+          )}
+          {truncated && <div>Catálogo recortado: hay más instrumentos de los que caben</div>}
+          {current?.catalog_updated_at ? (
+            <div>Catálogo leído el {current.catalog_updated_at.slice(0, 16).replace("T", " ")}</div>
+          ) : (
+            <div>Catálogo sin descubrir — pulsa «Actualizar catálogo»</div>
+          )}
+        </div>
       </div>
 
       <ConfirmDialog

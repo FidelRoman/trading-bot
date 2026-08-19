@@ -1,13 +1,15 @@
 "use client";
 
 import { useState } from "react";
+import AssetBadge from "./ui/AssetBadge";
 import ConfirmDialog from "./ConfirmDialog";
 import EmptyState from "./ui/EmptyState";
 import Icon from "./ui/Icon";
 import { Panel } from "./ui/Panel";
 import { useReach } from "./ui/reach";
 import { useToast } from "./ui/Toast";
-import { fmt, fmtPx, sign } from "@/lib/format";
+import { signedMoney } from "@/lib/format";
+import { formatPriceByAsset, formatVolumeByAsset } from "@/lib/instruments";
 import { postJSON } from "@/lib/api";
 import { useLive } from "@/lib/live";
 
@@ -83,13 +85,22 @@ export default function PositionsPanel() {
                   background: "var(--panel-inset)",
                 }}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: "var(--s-2)" }}>
-                  <span className={`mark ${p.side === "long" ? "ok" : "danger"}`}>
-                    {p.side === "long" ? "Compra" : "Venta"}
+                <div style={{ display: "flex", alignItems: "center", gap: "var(--s-2)", flexWrap: "wrap" }}>
+                  <span
+                    className={`mark ${p.side === "long" ? "ok" : "danger"}`}
+                    style={{ fontWeight: 700, letterSpacing: "0.04em" }}
+                  >
+                    <span className="dot" />
+                    {p.side === "long" ? "+ COMPRA ▲" : "− VENTA ▼"}
                   </span>
-                  <span style={{ fontWeight: 600 }}>{symbol}</span>
-                  <span className={`num ${pl >= 0 ? "pos" : "neg"}`} style={{ marginLeft: "auto", fontWeight: 700 }}>
-                    {sign(pl)}
+                  <AssetBadge
+                    symbol={symbol}
+                    assetClass={status?.asset_class}
+                    size="sm"
+                    showType={true}
+                  />
+                  <span className={`num ${pl >= 0 ? "pos" : "neg"}`} style={{ marginLeft: "auto", fontWeight: 700, fontSize: "var(--fs-md)" }}>
+                    {signedMoney(pl)}
                   </span>
                   <button
                     className="btn quiet danger"
@@ -109,22 +120,14 @@ export default function PositionsPanel() {
                     color: "var(--ink-3)",
                   }}
                 >
-                  {/* 1 lote son 100.000 unidades solo en divisas; en acciones y
-                      metales el lote lo define el bróker, así que se ven unidades. */}
-                  {lotSize >= 100000 ? (
-                    <span>
-                      Volumen <b className="num" style={{ color: "var(--ink)" }}>{fmt(p.units / lotSize, 2)}</b>
-                    </span>
-                  ) : (
-                    <span>
-                      Unidades <b className="num" style={{ color: "var(--ink)" }}>{fmt(p.units, 0)}</b>
-                    </span>
-                  )}
                   <span>
-                    Apertura <b className="num" style={{ color: "var(--ink)" }}>{fmtPx(p.open_rate, digits)}</b>
+                    Volumen <b className="num" style={{ color: "var(--ink)" }}>{formatVolumeByAsset(p.units, lotSize, status?.asset_class, symbol)}</b>
                   </span>
                   <span>
-                    Actual <b className="num" style={{ color: "var(--ink)" }}>{fmtPx(prices?.bid, digits)}</b>
+                    Apertura <b className="num" style={{ color: "var(--ink)" }}>{formatPriceByAsset(p.open_rate, symbol, status?.asset_class, digits)}</b>
+                  </span>
+                  <span>
+                    Actual <b className="num" style={{ color: "var(--ink)" }}>{formatPriceByAsset(prices?.bid, symbol, status?.asset_class, digits)}</b>
                   </span>
                 </div>
                 <div className={`meter ${pl >= 0 ? "long" : "short"}`}>

@@ -50,6 +50,9 @@ export interface Status {
   };
   daily_pl_pct: number;
   daily_pl_abs: number;
+  daily_realized_pl?: number;
+  floating_pl?: number;
+  open_trades_count?: number;
   max_drawdown_pct: number;
   trades_today: number;
   max_trades_per_day: number;
@@ -263,6 +266,10 @@ export interface MarketSelection {
 
 export interface Trade {
   id?: number;
+  order_id?: string;
+  trade_id?: string;
+  symbol?: string | null;
+  asset_class?: string | null;
   side: "long" | "short";
   units: number;
   entry_time?: string;

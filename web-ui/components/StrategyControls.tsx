@@ -6,6 +6,7 @@ import Mark from "./ui/Mark";
 import { Panel } from "./ui/Panel";
 import { useToast } from "./ui/Toast";
 import { getJSON, postJSON } from "@/lib/api";
+import { getAssetBadgeInfo, getAssetCategory } from "@/lib/instruments";
 import { readAccount } from "@/lib/account";
 import { useLive } from "@/lib/live";
 
@@ -58,7 +59,9 @@ function Stepper({
 export default function StrategyControls() {
   const { status } = useLive();
   const { push } = useToast();
-  const [lots, setLots] = useState(0.1);
+  const assetInfo = getAssetBadgeInfo(status?.instrument, status?.asset_class);
+  const isStock = assetInfo.category === "share";
+  const [lots, setLots] = useState(isStock ? 1 : 0.1);
   const [tp, setTp] = useState(20);
   const [sl, setSl] = useState(15);
   const [pendingSide, setPendingSide] = useState<"long" | "short" | null>(null);
@@ -112,7 +115,7 @@ export default function StrategyControls() {
           {account.label}
         </Mark>
       }
-      caption="Van directas al bróker sin pasar por la estrategia. El control de riesgo diario sí se aplica."
+      caption={`Van directas al bróker para ${status?.instrument ?? "el activo"} sin pasar por la estrategia. El control de riesgo diario sí se aplica.`}
     >
       <div
         style={{
@@ -124,21 +127,30 @@ export default function StrategyControls() {
       >
         <div className="field">
           <label className="field-label" htmlFor={lotsId}>
-            Tamaño (lotes)
+            Tamaño ({assetInfo.unitName})
           </label>
-          <Stepper id={lotsId} label="tamaño en lotes" value={lots} onChange={setLots} step={0.01} min={0.01} max={5} decimals={2} />
+          <Stepper
+            id={lotsId}
+            label={`tamaño en ${assetInfo.unitName}`}
+            value={lots}
+            onChange={setLots}
+            step={isStock ? 1 : 0.01}
+            min={isStock ? 1 : 0.01}
+            max={isStock ? 1000 : 5}
+            decimals={isStock ? 0 : 2}
+          />
         </div>
         <div className="field">
           <label className="field-label" htmlFor={tpId}>
-            Take profit (pips)
+            Take profit ({assetInfo.spreadUnit})
           </label>
-          <Stepper id={tpId} label="take profit en pips" value={tp} onChange={setTp} step={0.5} min={1} max={200} decimals={1} />
+          <Stepper id={tpId} label={`take profit en ${assetInfo.spreadUnit}`} value={tp} onChange={setTp} step={0.5} min={1} max={500} decimals={1} />
         </div>
         <div className="field">
           <label className="field-label" htmlFor={slId}>
-            Stop loss (pips)
+            Stop loss ({assetInfo.spreadUnit})
           </label>
-          <Stepper id={slId} label="stop loss en pips" value={sl} onChange={setSl} step={0.5} min={1} max={200} decimals={1} />
+          <Stepper id={slId} label={`stop loss en ${assetInfo.spreadUnit}`} value={sl} onChange={setSl} step={0.5} min={1} max={500} decimals={1} />
         </div>
         <div style={{ display: "grid", gap: "var(--s-2)" }}>
           <button className="btn long block" disabled={busy} onClick={() => force("long")}>

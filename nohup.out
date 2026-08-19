@@ -1,0 +1,114 @@
+Usage: uvicorn [OPTIONS] APP
+Try 'uvicorn --help' for help.
+
+Error: No such option '--forwarded-allow-'. Did you mean '--forwarded-allow-ips'?
+Usage: uvicorn [OPTIONS] APP
+Try 'uvicorn --help' for help.
+
+Error: No such option '--forwarded-allow-'. Did you mean '--forwarded-allow-ips'?
+Usage: uvicorn [OPTIONS] APP
+Try 'uvicorn --help' for help.
+
+Error: No such option '--forwarded-allow-'. Did you mean '--forwarded-allow-ips'?
+INFO:     Started server process [77838]
+INFO:     Waiting for application startup.
+2026-08-19 10:37:36,067 WARNING tradingbot.web.app: Modo LIVE sobre XAU/USD en cuenta Demo: las órdenes son REALES
+2026-08-19 10:37:36,068 INFO tradingbot.broker: Sesión FXCM: CONNECTING
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-08-19 10:37:41,016 INFO tradingbot.broker: Sesión FXCM: CONNECTED
+2026-08-19 10:37:42,108 INFO tradingbot.broker: Conectado a FXCM (Demo), cuenta 1656690, XAU/USD (bullion) base_unit_size=1 pip=0.0001
+2026-08-19 10:37:42,108 INFO tradingbot.engine: Conectado con éxito a FXCM (XAU/USD)
+INFO:     100.98.152.29:50817 - "GET / HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50817 - "GET /_next/static/chunks/0ooyynj5dd2vv.css HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50817 - "GET /_next/static/chunks/20ck0jp8tmhv2.js HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50818 - "GET /_next/static/chunks/2quxbmgdyru--.js HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50818 - "GET /api/instruments HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50817 - "GET /api/instrument HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50820 - "WebSocket /ws" [accepted]
+INFO:     connection open
+INFO:     100.98.152.29:50821 - "GET /api/logs?limit=120 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50823 - "GET /api/trades?limit=100 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50824 - "GET /api/status HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50823 - "GET /api/instruments HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50822 - "GET /api/candles?count=200&tf=m15 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50818 - "HEAD /activity/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50821 - "GET /api/instrument HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50817 - "HEAD /fsr/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50824 - "GET /api/logs?limit=120 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50823 - "GET /api/trades?limit=100 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50821 - "HEAD /models/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50818 - "HEAD /train/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50824 - "HEAD /settings/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50822 - "HEAD /strategies/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50817 - "GET /api/candles?count=200&tf=m15 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50823 - "GET /api/positions HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50829 - "GET /history/index.txt?_rsc=1ox4i HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50829 - "GET /_next/static/chunks/0caib4_x9_exf.js HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50829 - "GET /api/trades?limit=200 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50829 - "HEAD /activity/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50833 - "HEAD /train/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50831 - "HEAD / HTTP/1.1" 304 Not Modified
+INFO:     100.98.152.29:50832 - "HEAD /fsr/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50832 - "HEAD /models/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50829 - "HEAD /settings/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50833 - "HEAD /strategies/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50834 - "GET /api/status HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50834 - "GET /api/positions HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50852 - "GET /api/status HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50852 - "GET /api/positions HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50852 - "HEAD / HTTP/1.1" 304 Not Modified
+INFO:     100.98.152.29:50852 - "GET /index.txt?_rsc=ui3t0 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50852 - "GET /api/instruments HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50858 - "GET /api/logs?limit=120 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50860 - "GET /api/trades?limit=100 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50852 - "HEAD /fsr/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50861 - "HEAD /activity/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50861 - "HEAD /strategies/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50858 - "HEAD /models/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50852 - "HEAD /train/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50860 - "HEAD /settings/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50857 - "GET /api/instrument HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50859 - "GET /api/candles?count=200&tf=m15 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50859 - "GET /history/index.txt?_rsc=1ox4i HTTP/1.1" 304 Not Modified
+INFO:     100.98.152.29:50859 - "GET /api/trades?limit=200 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50857 - "HEAD /activity/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50860 - "HEAD /fsr/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50852 - "HEAD /train/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50858 - "HEAD /models/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50852 - "HEAD /settings/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50858 - "HEAD /strategies/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50858 - "GET /api/instruments HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50860 - "GET /api/logs?limit=120 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50859 - "GET /api/trades?limit=100 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50852 - "GET /api/instrument HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50857 - "GET /api/candles?count=200&tf=m15 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50857 - "GET /api/status HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50857 - "GET /api/positions HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50871 - "HEAD /fsr/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50872 - "HEAD /activity/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50872 - "HEAD / HTTP/1.1" 304 Not Modified
+INFO:     100.98.152.29:50872 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     100.98.152.29:50872 - "GET /_next/static/chunks/0ooyynj5dd2vv.css HTTP/1.1" 304 Not Modified
+INFO:     100.98.152.29:50871 - "GET /_next/static/chunks/20ck0jp8tmhv2.js HTTP/1.1" 304 Not Modified
+INFO:     100.98.152.29:50871 - "GET /_next/static/chunks/2quxbmgdyru--.js HTTP/1.1" 304 Not Modified
+INFO:     100.98.152.29:50871 - "GET /api/instruments HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50872 - "GET /api/instrument HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50875 - "WebSocket /ws" [accepted]
+INFO:     connection open
+INFO:     100.98.152.29:50876 - "GET /api/logs?limit=120 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50878 - "GET /api/trades?limit=100 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50879 - "GET /api/status HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50878 - "GET /api/instruments HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50877 - "GET /api/candles?count=200&tf=m15 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50876 - "GET /api/instrument HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50872 - "HEAD /fsr/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50871 - "HEAD /activity/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50879 - "GET /api/logs?limit=120 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50878 - "GET /api/trades?limit=100 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50876 - "HEAD /train/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50872 - "GET /api/positions HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50876 - "HEAD /strategies/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50877 - "HEAD /settings/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50872 - "HEAD /models/ HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50871 - "GET /api/candles?count=200&tf=m15 HTTP/1.1" 200 OK

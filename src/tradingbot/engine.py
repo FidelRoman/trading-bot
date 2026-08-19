@@ -355,7 +355,7 @@ class BotEngine:
         except Exception as e:
             log.exception("Orden manual fallida")
             return {"ok": False, "error": str(e)}
-        self.store.open_trade(order_id, side, units)
+        self.store.open_trade(order_id, side, units, symbol=self.symbol())
         # Los paréntesis no sobran: sin ellos el ternario se come toda la
         # concatenación y una orden sin SL ni TP se registraba como
         # "— sin SL/TP (orden 123)", sin dirección, unidades ni instrumento.
@@ -682,7 +682,7 @@ class BotEngine:
 
         stop_pips = sig.stop_distance / spec.pip
         order_id = self.broker.open_position(sig.side, units, stop_pips, sig.take_profit)
-        self.store.open_trade(order_id, sig.side, units)
+        self.store.open_trade(order_id, sig.side, units, symbol=self.symbol())
         self.store.log(
             "info",
             f"ORDEN {sig.side.upper()} {units} {self.symbol()} — SL {stop_pips:.1f} pips, "
@@ -911,14 +911,30 @@ class BotEngine:
                 info = self.broker.account_info()
             except Exception:
                 connected = False
-        day_start = self.store.day_start_equity()
+
+        # Open trades floating P&L
+        open_trades_list = []
+        if connected:
+            try:
+                open_trades_list = self.broker.open_trades()
+            except Exception:
+                pass
+        floating_pl = round(sum(t.get("gross_pl", 0.0) for t in open_trades_list), 2)
+        realized_today = round(self.store.today_pnl(), 2)
+
+        # Total daily P&L includes closed trades today AND current open positions
         equity = info.get("equity")
-        daily_pl_pct = (
-            round((equity - day_start) / day_start * 100, 2)
-            if equity and day_start
-            else 0.0
-        )
-        daily_pl_abs = round(equity - day_start, 2) if equity and day_start else 0.0
+        balance = info.get("balance")
+        day_start = self.store.day_start_equity()
+
+        if day_start and equity:
+            daily_pl_abs = round(equity - day_start, 2)
+            daily_pl_pct = round((daily_pl_abs / day_start) * 100, 2) if day_start > 0 else 0.0
+        else:
+            daily_pl_abs = round(realized_today + floating_pl, 2)
+            base = (balance - realized_today) if (balance is not None and (balance - realized_today) > 0) else (equity or 10000.0)
+            daily_pl_pct = round((daily_pl_abs / base) * 100, 2) if base > 0 else 0.0
+
         # La conexión puede caer después de account_info(). El status es una
         # lectura observacional: nunca debe convertir esa transición en un 500.
         net_position = 0
@@ -958,6 +974,9 @@ class BotEngine:
             "account": info,
             "daily_pl_pct": daily_pl_pct,
             "daily_pl_abs": daily_pl_abs,
+            "daily_realized_pl": realized_today,
+            "floating_pl": floating_pl,
+            "open_trades_count": len(open_trades_list),
             "max_drawdown_pct": self.store.max_drawdown_pct(),
             "trades_today": self.store.trades_today(),
             "max_trades_per_day": self.risk_params().max_trades_per_day,

@@ -13,12 +13,14 @@ import LogsPanel from "@/components/LogsPanel";
 import Mandate from "@/components/Mandate";
 import PositionsPanel from "@/components/PositionsPanel";
 import StrategyControls from "@/components/StrategyControls";
+import AssetBadge from "@/components/ui/AssetBadge";
 import Mark from "@/components/ui/Mark";
 import Notice from "@/components/ui/Notice";
 import { Panel } from "@/components/ui/Panel";
 import Skeleton from "@/components/ui/Skeleton";
 import { getJSON } from "@/lib/api";
-import { fmt, fmtPx, sign } from "@/lib/format";
+import { fmt, signedMoney } from "@/lib/format";
+import { formatDistanceByAsset, formatPriceByAsset } from "@/lib/instruments";
 import { useLive } from "@/lib/live";
 import type { Band, Candle, Trade } from "@/lib/types";
 
@@ -92,10 +94,15 @@ export default function Operacion() {
       <div className="stack">
         <section className="panel" aria-label={`Cotización de ${symbol}`}>
           <div className="panel-head" style={{ flexWrap: "wrap", gap: "var(--s-4)" }}>
-            <div className="lede">
-              <h2 className="lede-symbol">{symbol}</h2>
+            <div className="lede" style={{ alignItems: "center" }}>
+              <AssetBadge
+                symbol={symbol}
+                assetClass={status?.asset_class}
+                size="lg"
+                showType={true}
+              />
               <span className={`lede-price num${drift ? ` ${drift}` : ""}`}>
-                {fmtPx(prices?.bid, digits)}
+                {formatPriceByAsset(prices?.bid, symbol, status?.asset_class, digits)}
               </span>
               <Mark tone={wsConnected ? "ok" : "warn"} dot live={wsConnected}>
                 {wsConnected ? "En vivo" : "Reconectando"}
@@ -151,17 +158,18 @@ export default function Operacion() {
 
           <div className="axis-foot">
             <span>
-              Compra <b className="num">{fmtPx(prices?.bid, digits)}</b>
+              Compra <b className="num">{formatPriceByAsset(prices?.bid, symbol, status?.asset_class, digits)}</b>
             </span>
             <span>
-              Venta <b className="num">{fmtPx(prices?.ask, digits)}</b>
+              Venta <b className="num">{formatPriceByAsset(prices?.ask, symbol, status?.asset_class, digits)}</b>
             </span>
             <span>
-              Spread <b className="num">{fmt(prices?.spread_pips, 1)}</b> pips
+              Spread <b className="num">{fmt(prices?.spread_pips, 1)}</b>{" "}
+              {status?.asset_class === "share" ? "spread" : status?.asset_class === "index" ? "pts" : "pips"}
             </span>
             <span>
               P&L flotante{" "}
-              <b className={`num ${floatingPl >= 0 ? "pos" : "neg"}`}>{sign(floatingPl)}</b>
+              <b className={`num ${floatingPl >= 0 ? "pos" : "neg"}`}>{signedMoney(floatingPl)}</b>
             </span>
           </div>
         </section>

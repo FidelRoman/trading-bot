@@ -9,6 +9,7 @@ import Link from "next/link";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { MetricsHead, MetricsRow } from "@/components/metrics";
 import TrainingParams from "@/components/TrainingParams";
+import AssetBadge from "@/components/ui/AssetBadge";
 import EmptyState from "@/components/ui/EmptyState";
 import Icon from "@/components/ui/Icon";
 import Mark from "@/components/ui/Mark";
@@ -243,9 +244,9 @@ export default function ModelsPage() {
                       {parejasActivas.map(([simbolo, runId]) => (
                         <tr key={simbolo} className={simbolo === instrumentoActual ? "is-marked" : ""}>
                           <td>
-                            {simbolo}
+                            <AssetBadge symbol={simbolo} size="sm" showType={true} />
                             {simbolo === instrumentoActual && (
-                              <div style={{ color: "var(--ink-3)", fontSize: "var(--fs-2xs)" }}>
+                              <div style={{ color: "var(--ink-3)", fontSize: "var(--fs-2xs)", marginTop: "2px" }}>
                                 El que opera el bot
                               </div>
                             )}
@@ -321,7 +322,7 @@ export default function ModelsPage() {
                           reference={m.benchmark_metrics}
                           highlight={!!m.is_active}
                           lead={[
-                            m.instrument,
+                            <AssetBadge key="sym" symbol={m.instrument} size="sm" showType={true} />,
                             m.timeframe?.toUpperCase() ?? "—",
                           ]}
                           extra={[
@@ -494,12 +495,11 @@ export default function ModelsPage() {
                       >
                         <td className="num">{row.rank}</td>
                         <td>
-                          {row.symbol}
+                          <AssetBadge symbol={row.symbol} size="sm" showType={true} />
                           {row.winner && (
-                            <>
-                              {" "}
+                            <span style={{ marginLeft: "var(--s-2)" }}>
                               <Mark tone="ok">Ganadora</Mark>
-                            </>
+                            </span>
                           )}
                         </td>
                         <td>{row.timeframe.toUpperCase()}</td>

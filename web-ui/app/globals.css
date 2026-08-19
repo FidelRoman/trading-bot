@@ -805,6 +805,31 @@ select.select,
 }
 
 /* ===========================================================================
+   INSIGNIA DE ACTIVO — diferenciación visual de divisas, acciones y CFD
+   =========================================================================== */
+
+.asset-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-control);
+  line-height: 1.2;
+}
+.asset-badge.forex {
+  border-color: var(--accent);
+}
+.asset-badge.share {
+  border-color: rgba(138, 69, 230, 0.4);
+}
+.asset-badge.cfd_index,
+.asset-badge.cfd_metal,
+.asset-badge.cfd_commodity {
+  border-color: var(--warn);
+}
+.asset-badge.crypto {
+  border-color: var(--long);
+}
+
+/* ===========================================================================
    AVISOS — un solo patrón, cuatro tonos
    =========================================================================== */
 

@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS trades (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     order_id TEXT,
     trade_id TEXT,
+    symbol TEXT,
     side TEXT NOT NULL,
     units INTEGER NOT NULL,
     entry_time TEXT NOT NULL,
@@ -55,6 +56,12 @@ class Store:
         self._lock = threading.Lock()
         with self._lock, self._db:
             self._db.executescript(_SCHEMA)
+            try:
+                cols = [r[1] for r in self._db.execute("PRAGMA table_info(trades)").fetchall()]
+                if "symbol" not in cols:
+                    self._db.execute("ALTER TABLE trades ADD COLUMN symbol TEXT")
+            except Exception:
+                pass
 
     def close(self) -> None:
         with self._lock:
@@ -77,12 +84,12 @@ class Store:
 
     # -- trades ---------------------------------------------------------
 
-    def open_trade(self, order_id: str, side: str, units: int) -> int:
+    def open_trade(self, order_id: str, side: str, units: int, symbol: Optional[str] = None) -> int:
         with self._lock, self._db:
             cur = self._db.execute(
-                "INSERT INTO trades(order_id, side, units, entry_time, status) "
-                "VALUES(?,?,?,?, 'open')",
-                (order_id, side, units, _now()),
+                "INSERT INTO trades(order_id, symbol, side, units, entry_time, status) "
+                "VALUES(?,?,?,?,?, 'open')",
+                (order_id, symbol, side, units, _now()),
             )
             return int(cur.lastrowid)
 
@@ -126,6 +133,16 @@ class Store:
                 "SELECT COUNT(*) AS n FROM trades WHERE entry_time >= ?", (today,)
             ).fetchone()
         return int(row["n"])
+
+    def today_pnl(self) -> float:
+        """Suma de P&L de operaciones cerradas hoy."""
+        today = datetime.now(timezone.utc).date().isoformat()
+        with self._lock:
+            row = self._db.execute(
+                "SELECT SUM(pnl) AS total FROM trades WHERE status='closed' AND exit_time >= ? AND pnl IS NOT NULL",
+                (today,),
+            ).fetchone()
+        return float(row["total"] or 0.0) if row else 0.0
 
     def stats(self) -> dict:
         with self._lock:

@@ -5,6 +5,7 @@
 
 import { useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
+import AssetBadge from "./ui/AssetBadge";
 import ConfirmDialog from "./ConfirmDialog";
 import Icon from "./ui/Icon";
 import Mark from "./ui/Mark";
@@ -109,7 +110,14 @@ export default function Topbar() {
         </div>
         <div className="readout">
           <span className="readout-label">Instrumento</span>
-          <span className="readout-value">{status?.instrument ?? "—"}</span>
+          <span className="readout-value" style={{ fontSize: "var(--fs-sm)" }}>
+            <AssetBadge
+              symbol={status?.instrument}
+              assetClass={status?.asset_class}
+              size="sm"
+              showType={true}
+            />
+          </span>
         </div>
         {/* Lo que «Detener bot» apaga: se resalta al apuntar al control. */}
         <div className="readout" data-reach-target="engine">
