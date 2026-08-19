@@ -114,3 +114,13 @@ INFO:     100.98.152.29:50872 - "HEAD /models/ HTTP/1.1" 200 OK
 INFO:     100.98.152.29:50871 - "GET /api/candles?count=200&tf=m15 HTTP/1.1" 200 OK
 INFO:     100.98.152.29:50886 - "GET /api/status HTTP/1.1" 200 OK
 INFO:     100.98.152.29:50886 - "GET /api/positions HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50891 - "GET /api/status HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50892 - "GET /api/logs?limit=120 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50892 - "GET /api/positions HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50901 - "GET /api/status HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50901 - "GET /api/positions HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50915 - "GET /api/status HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50916 - "GET /api/logs?limit=120 HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50916 - "GET /api/positions HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50923 - "GET /api/status HTTP/1.1" 200 OK
+INFO:     100.98.152.29:50923 - "GET /api/positions HTTP/1.1" 200 OK

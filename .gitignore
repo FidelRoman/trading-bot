@@ -13,3 +13,4 @@ data/history/
 .history/
 History/
 data/backtest_*.csv
+nohup.out
