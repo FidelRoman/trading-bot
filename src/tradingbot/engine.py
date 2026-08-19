@@ -18,6 +18,7 @@ from typing import Awaitable, Callable, Optional
 from .config import DEFAULT_SPEC, InstrumentSpec, RiskParams, Settings, StrategyParams
 from .store import Store
 from .strategy import entry_allowed, latest_signal, size_position, spread_ok
+from .telegram_notify import send_telegram_message
 
 # Rangos permitidos para ajustes desde la interfaz: clave -> (min, max, tipo) o (opciones, tipo)
 SETTING_BOUNDS = {
@@ -368,6 +369,10 @@ class BotEngine:
             f"ORDEN MANUAL {'COMPRA' if side == 'long' else 'VENTA'} {units} "
             f"{self.symbol()} — {proteccion} (orden {order_id})",
         )
+        send_telegram_message(
+            f"🟢 Apertura manual {'COMPRA' if side == 'long' else 'VENTA'} {units} "
+            f"{self.symbol()} — {proteccion} (orden {order_id})"
+        )
         return {"ok": True, "order_id": order_id, "units": units}
 
     def _halted_today(self) -> bool:
@@ -590,6 +595,10 @@ class BotEngine:
                 f"Trade cerrado ({reason.upper()}): {rec['side']} {rec['units']} "
                 f"P&L {info['gross_pl']:+.2f}",
             )
+            send_telegram_message(
+                f"🔴 Cierre ({reason.upper()}) {rec['side']} {rec['units']} {self.symbol()} "
+                f"— P&L {info['gross_pl']:+.2f} ({round(pips, 1)} pips)"
+            )
         else:
             self.store.close_trade(rec["id"], None, None, None, "unknown")
             self.store.log("warn", f"Trade {rec['trade_id']} cerrado sin datos de cierre")
@@ -678,6 +687,10 @@ class BotEngine:
             "info",
             f"ORDEN {sig.side.upper()} {units} {self.symbol()} — SL {stop_pips:.1f} pips, "
             f"TP {sig.take_profit:.{spec.digits}f} (orden {order_id})",
+        )
+        send_telegram_message(
+            f"🟢 Apertura automática {sig.side.upper()} {units} {self.symbol()} — "
+            f"SL {stop_pips:.1f} pips, TP {sig.take_profit:.{spec.digits}f} (orden {order_id})"
         )
 
     # -- decisión por vela: FSRPPO -----------------------------------------
@@ -824,6 +837,10 @@ class BotEngine:
             "info",
             f"FSRPPO {decision.side.upper()} {abs(fill['traded_units'])} → posición neta "
             f"{objetivo} @ {fill['price']} (coste {fill['cost']:.2f})",
+        )
+        send_telegram_message(
+            f"🔵 FSRPPO {decision.side.upper()} {abs(fill['traded_units'])} → posición neta "
+            f"{objetivo} @ {fill['price']} (coste {fill['cost']:.2f})"
         )
         self.store.set_state("last_decision", decision.as_dict())
 
